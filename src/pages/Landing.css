@@ -1,0 +1,419 @@
+/* Landing Page Layout */
+.landing-page {
+    padding-bottom: 4rem;
+}
+
+/* Hero Section */
+.hero-section {
+    min-height: 90vh;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--space-6);
+    position: relative;
+    overflow: hidden;
+    gap: 4rem;
+    max-width: var(--container-max);
+    margin: 0 auto;
+}
+
+.hero-section::before {
+    content: '';
+    position: absolute;
+    top: -20%;
+    left: -10%;
+    width: 60%;
+    height: 60%;
+    background: radial-gradient(circle, rgba(139, 92, 246, 0.15), transparent 70%);
+    z-index: -1;
+    filter: blur(60px);
+}
+
+.hero-content {
+    flex: 1;
+    max-width: 600px;
+    z-index: 2;
+}
+
+.hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 99px;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+    backdrop-filter: blur(4px);
+}
+
+.badge-dot {
+    width: 8px;
+    height: 8px;
+    background-color: var(--status-online);
+    border-radius: 50%;
+    box-shadow: 0 0 10px var(--status-online);
+}
+
+.hero-title {
+    font-size: 4.5rem;
+    font-weight: 800;
+    line-height: 1.1;
+    margin-bottom: 1.5rem;
+    letter-spacing: -0.02em;
+}
+
+.hero-subtitle {
+    font-size: 1.25rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 2.5rem;
+    max-width: 480px;
+}
+
+.hero-actions {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 3rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.join-form {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.hero-stats {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.stat-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.stat-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--border-subtle);
+}
+
+/* Hero Visual */
+.hero-visual {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    perspective: 2000px;
+    /* Reduced perspective for less distortion */
+}
+
+.visual-card {
+    width: 100%;
+    max-width: 540px;
+    /* Removed fixed min-height to let content dictate */
+    position: relative;
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+    /* Reset tilt for desktop default, can add subtle hover move instead */
+    transform: rotateY(-5deg) rotateX(2deg);
+    transition: transform 0.5s var(--ease-spring);
+}
+
+.visual-card:hover {
+    transform: rotateY(0) rotateX(0) scale(1.02);
+}
+
+.mock-video-player {
+    background: #000;
+    border-radius: var(--radius-lg);
+    aspect-ratio: 16/9;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.5);
+}
+
+.mock-play-btn {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.mock-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.mock-bar {
+    height: 100%;
+    background: var(--status-error);
+    /* Netflix Red mock */
+}
+
+.mock-participants {
+    display: flex;
+    margin-top: 1.5rem;
+    position: relative;
+}
+
+.mock-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 2px solid var(--bg-surface);
+    background: var(--accent-primary);
+    margin-left: -12px;
+}
+
+.mock-avatar:first-child {
+    margin-left: 0;
+    background: var(--status-online);
+}
+
+.mock-reaction {
+    position: absolute;
+    right: 10%;
+    top: -40px;
+    font-size: 24px;
+    animation: floatUp 2s ease-out infinite;
+    opacity: 0;
+}
+
+@keyframes floatUp {
+    0% {
+        transform: translateY(20px) scale(0.5);
+        opacity: 0;
+    }
+
+    50% {
+        opacity: 1;
+    }
+
+    100% {
+        transform: translateY(-40px) scale(1.1);
+        opacity: 0;
+    }
+}
+
+/* Features Section */
+.features-section {
+    padding: 4rem 8vw;
+}
+
+.section-header {
+    text-align: center;
+    margin-bottom: 4rem;
+}
+
+.section-title {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+}
+
+.section-desc {
+    color: var(--text-secondary);
+    font-size: 1.125rem;
+}
+
+.features-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    /* Enforce 3 columns for desktop balance */
+    gap: var(--space-6);
+    max-width: var(--container-max);
+    margin: 0 auto;
+}
+
+.feature-card {
+    height: 100%;
+    /* Equal height */
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: var(--space-8);
+    /* 32px consistent padding */
+}
+
+.feature-card h3 {
+    margin: var(--space-6) 0 var(--space-2);
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.feature-card p {
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin: 0;
+    flex: 1;
+    /* Pushes content to fill space evenly if needed */
+}
+
+.icon-wrapper {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.color-violet {
+    color: #a78bfa;
+    background: rgba(139, 92, 246, 0.1);
+}
+
+.color-emerald {
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.1);
+}
+
+.color-blue {
+    color: #60a5fa;
+    background: rgba(59, 130, 246, 0.1);
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+    .hero-section {
+        flex-direction: column;
+        padding-top: 6rem;
+        text-align: center;
+    }
+
+    .hero-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .hero-title {
+        font-size: 3rem;
+    }
+}
+
+@media (max-width: 640px) {
+    .hero-title {
+        font-size: 2.5rem;
+    }
+
+    .hero-actions {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .hero-actions button {
+        width: 100%;
+    }
+}
+
+/* How It Works Section */
+.how-it-works {
+    padding: 6rem 8vw;
+    background: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.2) 100%);
+}
+
+.steps-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2rem;
+    max-width: var(--container-max);
+    margin: 0 auto;
+}
+
+.step-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 2rem;
+    position: relative;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 24px;
+    backdrop-filter: blur(12px);
+    transition: transform 0.3s ease;
+}
+
+.step-item:hover {
+    transform: translateY(-5px);
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.step-number {
+    font-size: 3rem;
+    font-weight: 800;
+    color: transparent;
+    -webkit-text-stroke: 1px rgba(255, 255, 255, 0.3);
+    margin-bottom: 1rem;
+    line-height: 1;
+    position: relative;
+}
+
+.step-item:hover .step-number {
+    color: var(--color-accent);
+    -webkit-text-stroke: 0;
+    text-shadow: 0 0 20px rgba(99, 102, 241, 0.5);
+}
+
+.step-item h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+    color: var(--color-text-primary);
+}
+
+.step-item p {
+    color: var(--color-text-secondary);
+    line-height: 1.6;
+    font-size: 1rem;
+}
+
+.step-divider {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-text-muted);
+    opacity: 0.5;
+}
+
+@media (max-width: 768px) {
+    .steps-container {
+        flex-direction: column;
+        gap: 3rem;
+    }
+
+    .step-divider {
+        transform: rotate(90deg);
+        margin: 1rem 0;
+    }
+
+    .step-item {
+        width: 100%;
+    }
+}

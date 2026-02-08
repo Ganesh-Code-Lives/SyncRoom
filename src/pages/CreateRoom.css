@@ -1,0 +1,231 @@
+.page-wrapper-centered {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at center, #1e293b 0%, #000 100%);
+}
+
+.main-content {
+    flex: 1;
+    padding: var(--space-6);
+}
+
+.centered-content {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.create-room-card {
+    width: 100%;
+    max-width: 480px;
+    padding: var(--space-8);
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: var(--space-8);
+    position: relative;
+    /* Optical centering for title */
+}
+
+.back-link {
+    color: var(--text-secondary);
+    transition: color 0.2s;
+    padding: var(--space-2);
+    margin-left: -8px;
+    /* Negative margin to align icon visually with edge */
+    display: flex;
+    align-items: center;
+}
+
+.back-link:hover {
+    color: var(--text-primary);
+}
+
+.card-title {
+    flex: 1;
+    text-align: center;
+    margin-right: 32px;
+    /* Counter-balance the back button width to center title perfectly */
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+.create-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.type-selector {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+}
+
+.type-option {
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+}
+
+.type-option:hover {
+    border-color: var(--text-secondary);
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.type-option.active {
+    border-color: var(--accent-primary);
+    background-color: rgba(139, 92, 246, 0.1);
+    color: var(--accent-primary);
+    box-shadow: 0 0 15px rgba(139, 92, 246, 0.15);
+}
+
+.main-content {
+    flex: 1;
+    padding: 2rem 1.5rem;
+}
+
+.centered-content {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.create-room-card {
+    width: 100%;
+    max-width: 480px;
+    padding: 2rem;
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 2rem;
+    position: relative;
+}
+
+.back-link {
+    color: var(--color-text-muted);
+    transition: color var(--transition-fast);
+    padding: 0.5rem;
+    margin-left: -0.5rem;
+    display: flex;
+    align-items: center;
+}
+
+.back-link:hover {
+    color: var(--color-text-primary);
+}
+
+.card-title {
+    flex: 1;
+    text-align: center;
+    margin-right: 28px;
+    /* Balance the back button */
+    font-size: 1.5rem;
+}
+
+.create-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.type-selector {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+.type-option {
+    background-color: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    transition: all var(--transition-fast);
+}
+
+.type-option:hover {
+    border-color: var(--color-text-muted);
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.type-option.active {
+    border-color: var(--color-accent);
+    background-color: rgba(99, 102, 241, 0.1);
+    color: var(--color-accent);
+}
+
+.auth-gate {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    padding: 2rem;
+    text-align: center;
+}
+
+.auth-gate h2 {
+    margin: 0;
+    font-size: 1.5rem;
+}
+
+.auth-gate p {
+    color: var(--color-text-secondary);
+    margin: 0;
+}
+
+.text-warning {
+    color: #f59e0b;
+}
+
+.connection-warning {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 8px;
+    color: #f59e0b;
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+}
+
+.error-message {
+    color: #ef4444;
+    font-size: 0.9rem;
+    margin: 0;
+    text-align: center;
+}

@@ -1,0 +1,79 @@
+.shared-view-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 400px;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.shared-view-video-wrapper {
+    width: 100%;
+    height: 100%;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.shared-view-video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+}
+
+.shared-view-video.host-preview {
+    /* Host sees their own capture */
+}
+
+.shared-view-stop-btn {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(239, 68, 68, 0.9);
+    border: none;
+    border-radius: var(--radius-lg);
+    color: #fff;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.shared-view-stop-btn:hover {
+    background: rgba(239, 68, 68, 1);
+}
+
+.shared-view-status {
+    position: absolute;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0.75rem 1.5rem;
+    background: rgba(0, 0, 0, 0.7);
+    border-radius: var(--radius-lg);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.shared-view-error {
+    color: var(--status-error);
+}
+
+.shared-view-error .change-media-btn {
+    margin-top: 1rem;
+    padding: 0.5rem 1rem;
+    background: var(--accent-primary);
+    border: none;
+    border-radius: var(--radius-lg);
+    color: #fff;
+    cursor: pointer;
+}

@@ -1,0 +1,89 @@
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 500;
+    border-radius: var(--radius-md);
+    transition: background-color var(--transition-fast), transform var(--transition-fast);
+    outline: none;
+    font-family: var(--font-family-base);
+}
+
+.btn:active {
+    transform: scale(0.98);
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Variants */
+.btn-primary {
+    background-color: var(--color-accent);
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background-color: var(--color-accent-hover);
+}
+
+.btn-secondary {
+    background-color: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background-color: var(--color-bg-secondary);
+    /* Keep it distinct or lighter? Actually tertiary is lighter than secondary in my palette variables mapping usually, 
+  but here:
+  bg-primary: Slate 900
+  bg-secondary: Slate 800
+  bg-tertiary:  Slate 700 
+  So tertiary is lighter.
+  Hovering tertiary should maybe go even lighter or slightly darker. Let's make it interactive. */
+    filter: brightness(1.1);
+}
+
+.btn-danger {
+    background-color: var(--color-danger);
+    color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+    filter: brightness(0.9);
+}
+
+.btn-ghost {
+    background-color: transparent;
+    color: var(--color-text-secondary);
+}
+
+.btn-ghost:hover:not(:disabled) {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: var(--color-text-primary);
+}
+
+/* Sizes */
+.btn-sm {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.875rem;
+    height: 32px;
+}
+
+.btn-md {
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+    height: 42px;
+}
+
+.btn-lg {
+    padding: 0.75rem 1.5rem;
+    font-size: 1.125rem;
+    height: 52px;
+}
+
+.btn-full {
+    width: 100%;
+}

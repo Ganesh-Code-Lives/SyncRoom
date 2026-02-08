@@ -1,0 +1,89 @@
+.glow-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    border-radius: var(--radius-lg);
+    border: none;
+    cursor: pointer;
+    font-family: var(--font-family-base);
+    overflow: hidden;
+    transition: all var(--transition-fast);
+    z-index: 1;
+}
+
+.glow-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Variants */
+.glow-btn-primary {
+    background: var(--accent-gradient);
+    color: white;
+    box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+}
+
+.glow-btn-primary .btn-glow-bg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, transparent 50%);
+    pointer-events: none;
+}
+
+.glow-btn-secondary {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(4px);
+}
+
+.glow-btn-secondary:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.glow-btn-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+}
+
+.glow-btn-ghost:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* Sizes */
+.glow-btn-sm {
+    padding: 0 1rem;
+    height: 36px;
+    font-size: 0.875rem;
+}
+
+.glow-btn-md {
+    padding: 0 1.5rem;
+    height: 48px;
+    font-size: 1rem;
+}
+
+.glow-btn-lg {
+    padding: 0 2rem;
+    height: 56px;
+    font-size: 1.125rem;
+}
+
+.glow-btn-full {
+    width: 100%;
+}
+
+.btn-content {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
