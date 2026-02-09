@@ -31,6 +31,7 @@ export const RoomProvider = ({ children }) => {
     const [activeReaction, setActiveReaction] = useState(null);
     const [isRoomLoaded, setIsRoomLoaded] = useState(false);
     const [loadingStatus, setLoadingStatus] = useState('Initializing...'); // 'Initializing' | 'Connecting' | 'Rejoining' | 'Ready'
+    const [playlist, setPlaylist] = useState([]);
 
     const playerRef = useRef(null);
 
@@ -162,8 +163,8 @@ export const RoomProvider = ({ children }) => {
                 if (exists) {
                     // Update existing user's socket ID if needed
                     if (exists.id !== data.socketId) {
-                        return prev.map(p => 
-                            p.oderId === data.userId 
+                        return prev.map(p =>
+                            p.oderId === data.userId
                                 ? { ...p, id: data.socketId || socket.id }
                                 : p
                         );
@@ -200,17 +201,17 @@ export const RoomProvider = ({ children }) => {
                     }
                     return [...prev, message];
                 }
-                
+
                 // Check if this replaces an optimistic message (only for user messages from current user)
                 const currentUserId = user?.uid || sessionStorage.getItem('syncroom_guest_id');
                 if (message.senderId === currentUserId) {
-                    const optimisticIndex = prev.findIndex(m => 
-                        m.isOptimistic && 
-                        m.senderId === message.senderId && 
+                    const optimisticIndex = prev.findIndex(m =>
+                        m.isOptimistic &&
+                        m.senderId === message.senderId &&
                         m.content === message.content &&
                         Math.abs(new Date(m.timestamp) - new Date(message.timestamp)) < 5000
                     );
-                    
+
                     if (optimisticIndex !== -1) {
                         console.log('[RoomContext] Replacing optimistic message with server message');
                         // Replace optimistic message with server message
@@ -219,13 +220,13 @@ export const RoomProvider = ({ children }) => {
                         return updated;
                     }
                 }
-                
+
                 // Check for duplicates by ID only (don't filter by content for other users' messages)
                 if (prev.find(m => m.id === message.id)) {
                     console.log('[RoomContext] Duplicate message filtered by ID:', message.id);
                     return prev;
                 }
-                
+
                 console.log('[RoomContext] Adding new message to chat');
                 return [...prev, message];
             });
@@ -313,7 +314,7 @@ export const RoomProvider = ({ children }) => {
             socket.off('message_reaction_update', handleMessageReactionUpdate);
             socket.disconnect();
         };
-    }, [navigate, showError, showInfo, showSuccess, getUserInfo, user, isGuest]);
+    }, [navigate, showError, showInfo, showSuccess, getUserInfo, user, isRoomLoaded]);
 
     // ============================================
     // ROOM ACTIONS
@@ -349,6 +350,7 @@ export const RoomProvider = ({ children }) => {
                         isHost: u.oderId === roomData.hostId
                     })));
                     setChat(roomData.chat || []);
+                    sessionStorage.setItem('syncroom_last_room', response.roomCode);
                     resolve(response.roomCode);
                 } else {
                     reject(new Error(response.error));
@@ -409,7 +411,7 @@ export const RoomProvider = ({ children }) => {
                         }, 100);
                     }
 
-                    setIsRoomLoaded(true); // <--- CRITICAL FIX
+                    setIsRoomLoaded(true);
                     resolve(roomData);
                 } else {
                     setIsRoomLoaded(true);
@@ -421,6 +423,7 @@ export const RoomProvider = ({ children }) => {
 
     const leaveRoom = useCallback(() => {
         socket.emit('leave_room');
+        sessionStorage.removeItem('syncroom_last_room');
         setRoom(null);
         setParticipants([]);
         setChat([]);
@@ -437,7 +440,7 @@ export const RoomProvider = ({ children }) => {
     const sendMessage = useCallback((text) => {
         if (!room) return;
         const { oderId, userName, userAvatar } = getUserInfo();
-        
+
         // Optimistic update - show message immediately
         const tempId = `temp-${Date.now()}-${Math.random()}`;
         const optimisticMessage = {
@@ -451,7 +454,7 @@ export const RoomProvider = ({ children }) => {
             reactions: {},
             isOptimistic: true // Flag to identify temporary messages
         };
-        
+
         setChat(prev => [...prev, optimisticMessage]);
 
         // Send to server
@@ -464,10 +467,10 @@ export const RoomProvider = ({ children }) => {
                 content: text
             }
         });
-        
+
         // Replace optimistic message with server message when received
         // (handled in handleNewMessage by matching content + senderId)
-    }, [room, getUserInfo]);
+    }, [room, getUserInfo, user]);
 
     const addMessageReaction = useCallback((messageId, emoji) => {
         if (!room) return;
@@ -478,6 +481,17 @@ export const RoomProvider = ({ children }) => {
             messageId,
             emoji,
             userId: oderId
+        });
+    }, [room, getUserInfo]);
+
+    const sendReaction = useCallback((emoji) => {
+        if (!room) return;
+        const { oderId, userName } = getUserInfo();
+        socket.emit('send_reaction', {
+            roomCode: room.code,
+            emoji,
+            userId: oderId,
+            userName
         });
     }, [room, getUserInfo]);
 
@@ -571,6 +585,10 @@ export const RoomProvider = ({ children }) => {
         });
     }, [room, isHost, getUserInfo]);
 
+    const muteParticipant = useCallback(() => {
+        // TODO: Implement mute functionality
+    }, []);
+
     // ============================================
     // VOICE CHAT
     // ============================================
@@ -606,10 +624,8 @@ export const RoomProvider = ({ children }) => {
     }, [room]);
 
     // ============================================
-    // PLAYLIST (MOCK Implementation for now)
+    // PLAYLIST
     // ============================================
-    const [playlist, setPlaylist] = useState([]);
-
     const addToQueue = useCallback((mediaItem) => {
         setPlaylist(prev => [...prev, mediaItem]);
     }, []);
@@ -622,6 +638,9 @@ export const RoomProvider = ({ children }) => {
         console.log("Vote skip triggered");
     }, []);
 
+    // ============================================
+    // CURRENT USER
+    // ============================================
     const currentUser = participants.find(p => p.id === socket.id) || {
         id: socket.id,
         oderId: user?.uid,
@@ -636,7 +655,7 @@ export const RoomProvider = ({ children }) => {
     const value = {
         // State
         room,
-        currentUser, // Added this
+        currentUser,
         currentMedia,
         playback,
         chat,
@@ -645,11 +664,12 @@ export const RoomProvider = ({ children }) => {
         isLocked,
         isHost,
         isRoomLoaded,
-        loadingStatus, // <--- Granular loading state
+        loadingStatus,
         isConnected,
         connectionError,
         playerRef,
-        playlist, // Added this
+        playlist,
+        activeReaction,
 
         // Room Actions
         createRoom,
@@ -659,6 +679,7 @@ export const RoomProvider = ({ children }) => {
         // Chat
         sendMessage,
         addMessageReaction,
+        sendReaction,
 
         // Playback (Host Only)
         updatePlayback,
@@ -669,6 +690,7 @@ export const RoomProvider = ({ children }) => {
         toggleLock,
         kickParticipant,
         transferHost,
+        muteParticipant,
 
         // Voice
         joinVoice,
@@ -680,31 +702,7 @@ export const RoomProvider = ({ children }) => {
         voteSkip,
 
         // Sync
-        requestSync,
-
-        // Reactions
-        activeReaction,
-        sendReaction: useCallback((emoji) => {
-            if (!room) return;
-            const { oderId, userName } = getUserInfo();
-            socket.emit('send_reaction', {
-                roomCode: room.code,
-                emoji,
-                userId: oderId,
-                userName
-            });
-        }, [room, getUserInfo]),
-        addMessageReaction: useCallback((messageId, emoji) => {
-            if (!room) return;
-            const { oderId } = getUserInfo();
-            socket.emit('add_message_reaction', {
-                roomCode: room.code,
-                messageId,
-                emoji,
-                userId: oderId
-            });
-        }, [room, getUserInfo]),
-        muteParticipant: () => { }
+        requestSync
     };
 
     return <RoomContext.Provider value={value}>{children}</RoomContext.Provider>;
