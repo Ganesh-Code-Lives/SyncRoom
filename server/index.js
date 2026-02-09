@@ -339,12 +339,14 @@ io.on('connection', (socket) => {
         room.isLocked = !room.isLocked;
         io.to(roomCode).emit('room_locked', { isLocked: room.isLocked });
 
-        room.chat.push({
-            id: Date.now(),
+        const lockMessage = {
+            id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
             type: 'system',
-            content: room.isLocked ? 'Room has been locked' : 'Room has been unlocked'
-        });
-        io.to(roomCode).emit('new_message', room.chat[room.chat.length - 1]);
+            content: room.isLocked ? 'Room has been locked' : 'Room has been unlocked',
+            timestamp: new Date().toISOString()
+        };
+        room.chat.push(lockMessage);
+        io.to(roomCode).emit('new_message', lockMessage);
     });
 
     socket.on('kick_user', (data) => {
@@ -357,12 +359,14 @@ io.on('connection', (socket) => {
             io.to(targetSocket.id).emit('kicked');
             room.users = room.users.filter(u => u.oderId !== targetUserId);
 
-            room.chat.push({
-                id: Date.now(),
+            const kickMessage = {
+                id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
                 type: 'system',
-                content: `${targetUserName} was kicked from the room`
-            });
-            io.to(roomCode).emit('new_message', room.chat[room.chat.length - 1]);
+                content: `${targetUserName} was kicked from the room`,
+                timestamp: new Date().toISOString()
+            };
+            room.chat.push(kickMessage);
+            io.to(roomCode).emit('new_message', kickMessage);
             io.to(roomCode).emit('user_left', { userId: targetUserId, userName: targetUserName });
         }
     });
@@ -386,12 +390,14 @@ io.on('connection', (socket) => {
         }));
 
         // Broadcast System Message
-        room.chat.push({
-            id: Date.now(),
+        const transferMessage = {
+            id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
             type: 'system',
-            content: `Host role transferred to ${targetUser.name}`
-        });
-        io.to(roomCode).emit('new_message', room.chat[room.chat.length - 1]);
+            content: `Host role transferred to ${targetUser.name}`,
+            timestamp: new Date().toISOString()
+        };
+        room.chat.push(transferMessage);
+        io.to(roomCode).emit('new_message', transferMessage);
 
         // Broadcast Member/Host Update
         io.to(roomCode).emit('host_update', {
@@ -447,12 +453,14 @@ io.on('connection', (socket) => {
         };
         room.isPlaying = true; // Considered "playing" when sharing
 
-        room.chat.push({
-            id: Date.now(),
+        const screenShareStartMessage = {
+            id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
             type: 'system',
-            content: 'Host started screen sharing'
-        });
-        io.to(roomCode).emit('new_message', room.chat[room.chat.length - 1]);
+            content: 'Host started screen sharing',
+            timestamp: new Date().toISOString()
+        };
+        room.chat.push(screenShareStartMessage);
+        io.to(roomCode).emit('new_message', screenShareStartMessage);
 
         socket.to(roomCode).emit('screen_share_started', { hostSocketId: socket.id });
 
@@ -496,12 +504,14 @@ io.on('connection', (socket) => {
         if (!room) return;
         room.media = null;
         room.isPlaying = false;
-        room.chat.push({
-            id: Date.now(),
+        const screenShareStopMessage = {
+            id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
             type: 'system',
-            content: 'Host stopped screen sharing. Returning to media selection.'
-        });
-        io.to(roomCode).emit('new_message', room.chat[room.chat.length - 1]);
+            content: 'Host stopped screen sharing. Returning to media selection.',
+            timestamp: new Date().toISOString()
+        };
+        room.chat.push(screenShareStopMessage);
+        io.to(roomCode).emit('new_message', screenShareStopMessage);
         io.to(roomCode).emit('screen_share_stopped');
         io.to(roomCode).emit('playback_sync', {
             action: 'media_change',
@@ -530,7 +540,7 @@ io.on('connection', (socket) => {
     });
 
     // --------------------------------------
-    // DISCONNECT (with debounce)
+    // DISCONNECT (with 3s debounce for page reloads)
     // --------------------------------------
     socket.on('disconnect', () => {
         console.log(`[Socket] User disconnected: ${socket.id}`);
@@ -549,7 +559,7 @@ io.on('connection', (socket) => {
         const timer = setTimeout(() => {
             handleUserLeave(socket);
             disconnectTimers.delete(disconnectKey);
-        }, 10000); // 10 second grace period for reloads
+        }, 3000); // 3 second grace period for quick reloads
 
         disconnectTimers.set(disconnectKey, timer);
         console.log(`[Socket] Set disconnect timer for ${user.name} (3s grace period)`);
@@ -569,18 +579,20 @@ function handleUserLeave(socket) {
         room.users = room.users.filter(u => u.id !== socket.id);
         room.voiceUsers = room.voiceUsers.filter(u => u.id !== socket.id);
 
-        // Notify others
-        socket.to(roomCode).emit('user_left', {
+        // Notify others AND broadcast user list update
+        io.to(roomCode).emit('user_left', {
             userId: user.oderId,
             userName: user.name
         });
 
-        room.chat.push({
-            id: Date.now(),
+        const leaveMessage = {
+            id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
             type: 'system',
-            content: `${user.name} left the room`
-        });
-        socket.to(roomCode).emit('new_message', room.chat[room.chat.length - 1]);
+            content: `${user.name} left the room`,
+            timestamp: new Date().toISOString()
+        };
+        room.chat.push(leaveMessage);
+        io.to(roomCode).emit('new_message', leaveMessage);
 
         console.log(`[Room] ${user.name} left: ${roomCode}`);
 
@@ -592,12 +604,14 @@ function handleUserLeave(socket) {
                 currentTime: room.currentTime,
                 serverTime: Date.now()
             });
-            room.chat.push({
-                id: Date.now(),
+            const hostLeftMessage = {
+                id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
                 type: 'system',
-                content: 'Host has left. Playback paused.'
-            });
-            io.to(roomCode).emit('new_message', room.chat[room.chat.length - 1]);
+                content: 'Host has left. Playback paused.',
+                timestamp: new Date().toISOString()
+            };
+            room.chat.push(hostLeftMessage);
+            io.to(roomCode).emit('new_message', hostLeftMessage);
         }
 
         // Clean up empty rooms with grace period

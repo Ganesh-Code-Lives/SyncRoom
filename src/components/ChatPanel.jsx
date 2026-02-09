@@ -207,7 +207,7 @@ const ChatPanel = ({ chat, currentUser, participants, onSendMessage, onSendReact
                                     <div className="chat-message-inner">
                                         <div className="chat-message-meta">
                                             <div className="chat-meta-header">
-                                                <span className="chat-sender-name">{msg.senderName}</span>
+                                                <span className="chat-sender-name">{msg.senderName || 'Unknown User'}</span>
                                                 {senderParticipant?.isHost && (
                                                     <span className="chat-host-badge">
                                                         <Crown size={10} /> HOST

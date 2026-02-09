@@ -85,14 +85,19 @@ export const RoomProvider = ({ children }) => {
 
                 const { oderId, userName, userAvatar } = getUserInfo();
 
-                // FAILSAFE: 5s limit for join response
+                // FAILSAFE: 8s limit for join response
+                let timeoutFired = false;
                 const joinTimeout = setTimeout(() => {
-                    if (!isRoomLoaded) {
-                        console.warn('[Socket] Join timeout - retrying...');
-                        setLoadingStatus('Takes longer than expected... Retrying...');
-                        // Retry logic could go here, or just let user know
-                    }
-                }, 5000);
+                    timeoutFired = true;
+                    console.warn('[Socket] Join timeout - clearing state and redirecting');
+                    sessionStorage.removeItem('syncroom_last_room');
+                    setIsRoomLoaded(true);
+                    setLoadingStatus('Ready');
+                    setRoom(null);
+                    showError('Failed to rejoin room. Please try again.');
+                    // Note: navigate would need to be imported if we want to redirect here
+                    // For now, just clear the loading state and let Room.jsx handle redirect
+                }, 8000);
 
                 socket.emit('join_room', {
                     roomCode: storedRoomCode,
@@ -100,6 +105,9 @@ export const RoomProvider = ({ children }) => {
                     userName,
                     userAvatar
                 }, (response) => {
+                    // If timeout already fired, ignore this response
+                    if (timeoutFired) return;
+
                     clearTimeout(joinTimeout); // Clear failsafe
 
                     if (response.success) {
@@ -134,7 +142,9 @@ export const RoomProvider = ({ children }) => {
                         console.error('[Socket] Failed to auto-rejoin:', response.error);
                         sessionStorage.removeItem('syncroom_last_room');
                         setIsRoomLoaded(true); // Stop loading (will show error/home probably)
-                        setLoadingStatus('Error');
+                        setLoadingStatus('Ready');
+                        setRoom(null);
+                        showError(response.error || 'Failed to rejoin room');
                     }
                 });
             } else {
@@ -604,6 +614,17 @@ export const RoomProvider = ({ children }) => {
         socket.emit('leave_voice', { roomCode: room.code, userId: oderId });
     }, [room, getUserInfo]);
 
+    const toggleVoice = useCallback(() => {
+        const { oderId } = getUserInfo();
+        const isInVoice = voiceParticipants.some(p => p.oderId === oderId);
+
+        if (isInVoice) {
+            leaveVoice();
+        } else {
+            joinVoice();
+        }
+    }, [voiceParticipants, getUserInfo, joinVoice, leaveVoice]);
+
     // ============================================
     // SYNC REQUEST (For reconnection)
     // ============================================
@@ -695,6 +716,7 @@ export const RoomProvider = ({ children }) => {
         // Voice
         joinVoice,
         leaveVoice,
+        toggleVoice,
 
         // Playlist
         addToQueue,
