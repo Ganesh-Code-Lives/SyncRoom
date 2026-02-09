@@ -83,13 +83,17 @@ const Room = () => {
         }
     };
 
+
     // ... (existing handlers remain the same)
-    const handleCopyCode = () => {
+    const handleCopyCode = (event) => {
+        event?.preventDefault();
+        event?.stopPropagation();
         navigator.clipboard.writeText(room?.code || '');
         setCopied(true);
         success('Room code copied to clipboard!');
         setTimeout(() => setCopied(false), 2000);
     };
+
 
     const handleExitRoom = () => {
         leaveRoom(); // Notify server that user is leaving
@@ -182,7 +186,7 @@ const Room = () => {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span>Room Code: <strong>{room.code}</strong></span>
-                                <button onClick={handleCopyCode} style={{ background: 'none', border: 'none', color: '#8b5cf6' }}>
+                                <button type="button" onClick={handleCopyCode} style={{ background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer' }}>
                                     {copied ? <Check size={18} /> : <Copy size={18} />}
                                 </button>
                             </div>
@@ -237,7 +241,7 @@ const Room = () => {
                             )
                         ) : (
                             <MediaPlayer
-                                key={currentMedia.url}
+                                key={currentMedia.id || currentMedia.url || Date.now()}
                                 media={currentMedia}
                                 isHost={isHost}
                                 onClearMedia={clearMedia}
@@ -317,10 +321,11 @@ const Room = () => {
                     <div className="room-meta">
                         <h2>{room.name}</h2>
                         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                            <button className="room-code-badge" onClick={handleCopyCode}>
+                            <button type="button" className={`room-code-badge ${copied ? 'copied' : ''}`} onClick={handleCopyCode}>
                                 {copied ? <Check size={14} /> : <Copy size={14} />} {room.code}
                             </button>
                             <button
+                                type="button"
                                 className="exit-room-btn"
                                 onClick={handleExitRoom}
                                 title="Exit Room"

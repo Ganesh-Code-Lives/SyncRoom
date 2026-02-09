@@ -10,14 +10,6 @@ const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
     const { playback, updatePlayback } = useRoom();
     const [showFallback, setShowFallback] = useState(false);
 
-    // DEBUG: Check canPlay
-    useEffect(() => {
-        if (media?.url) {
-            const playable = ReactPlayer.canPlay(media.url);
-            console.log(`[MediaPlayer] URL: ${media.url}, canPlay: ${playable}`);
-        }
-    }, [media?.url]);
-
     // Reset fallback on new media ID
     useEffect(() => {
         setShowFallback(false);
@@ -33,7 +25,7 @@ const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
             <div className="media-player-container shared-view-mode">
                 {isHost && (
                     <div className="host-overlay-controls">
-                        <button className="change-media-btn" onClick={onClearMedia} title="Change Media">
+                        <button type="button" className="change-media-btn" onClick={onClearMedia} title="Change Media">
                             <RefreshCw size={16} />
                             <span>Stop Sharing</span>
                         </button>
@@ -95,7 +87,7 @@ const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
 
                 {isHost && (
                     <div className="host-overlay-controls">
-                        <button className="change-media-btn" onClick={onClearMedia} title="Change Media">
+                        <button type="button" className="change-media-btn" onClick={onClearMedia} title="Change Media">
                             <RefreshCw size={16} />
                             <span>Change</span>
                         </button>
@@ -178,7 +170,7 @@ const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
 
             {isHost && (
                 <div className="host-overlay-controls">
-                    <button className="change-media-btn" onClick={onClearMedia} title="Change Media">
+                    <button type="button" className="change-media-btn" onClick={onClearMedia} title="Change Media">
                         <RefreshCw size={16} />
                         <span>Change</span>
                     </button>

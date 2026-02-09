@@ -212,14 +212,20 @@ export const RoomProvider = ({ children }) => {
                     return [...prev, message];
                 }
 
-                // Check if this replaces an optimistic message (only for user messages from current user)
+                // Check if this is a duplicate by ID first (most reliable)
+                if (prev.find(m => m.id === message.id)) {
+                    console.log('[RoomContext] Duplicate message filtered by ID:', message.id);
+                    return prev;
+                }
+
+                // Check if this message should replace an optimistic message
                 const currentUserId = user?.uid || sessionStorage.getItem('syncroom_guest_id');
                 if (message.senderId === currentUserId) {
+                    // Find optimistic message with same content from current user
                     const optimisticIndex = prev.findIndex(m =>
                         m.isOptimistic &&
                         m.senderId === message.senderId &&
-                        m.content === message.content &&
-                        Math.abs(new Date(m.timestamp) - new Date(message.timestamp)) < 5000
+                        m.content === message.content
                     );
 
                     if (optimisticIndex !== -1) {
@@ -231,18 +237,13 @@ export const RoomProvider = ({ children }) => {
                     }
                 }
 
-                // Check for duplicates by ID only (don't filter by content for other users' messages)
-                if (prev.find(m => m.id === message.id)) {
-                    console.log('[RoomContext] Duplicate message filtered by ID:', message.id);
-                    return prev;
-                }
-
                 console.log('[RoomContext] Adding new message to chat');
                 return [...prev, message];
             });
         };
 
         const handlePlaybackSync = (data) => {
+            console.log('[RoomContext] Playback sync received:', data);
             setCurrentMedia(data.media);
             setPlayback(prev => ({
                 ...prev,
@@ -251,6 +252,7 @@ export const RoomProvider = ({ children }) => {
                 lastSyncTime: data.serverTime,
                 lastAction: data.action
             }));
+            console.log('[RoomContext] Updated media to:', data.media);
         };
 
         const handleRoomLocked = (data) => {
@@ -324,7 +326,7 @@ export const RoomProvider = ({ children }) => {
             socket.off('message_reaction_update', handleMessageReactionUpdate);
             socket.disconnect();
         };
-    }, [navigate, showError, showInfo, showSuccess, getUserInfo, user, isRoomLoaded]);
+    }, [navigate, getUserInfo, user, isRoomLoaded]); // Removed showError, showInfo, showSuccess - they're stable from ToastContext
 
     // ============================================
     // ROOM ACTIONS
@@ -400,6 +402,7 @@ export const RoomProvider = ({ children }) => {
 
                     // 3. Chat & Media
                     setChat(roomData.chat || []);
+                    console.log('[Join] Setting current media to:', roomData.media);
                     setCurrentMedia(roomData.media);
 
                     // 4. Playback State
@@ -413,13 +416,8 @@ export const RoomProvider = ({ children }) => {
                     // 5. Persistence for Auto-Rejoin
                     sessionStorage.setItem('syncroom_last_room', roomData.roomId);
 
-                    // 6. Late Joiner Seek Logic
-                    if (roomData.media && roomData.isPlaying && playerRef.current) {
-                        setTimeout(() => {
-                            playerRef.current?.seekTo(roomData.currentTime, 'seconds');
-                            console.log('[Late Join] Seeking to', roomData.currentTime);
-                        }, 100);
-                    }
+                    // 6. Log join success
+                    console.log('[Join] Room joined successfully. Media:', roomData.media, 'IsPlaying:', roomData.isPlaying);
 
                     setIsRoomLoaded(true);
                     resolve(roomData);
@@ -525,32 +523,35 @@ export const RoomProvider = ({ children }) => {
         if (!room || !isHost) return;
         const { oderId } = getUserInfo();
 
-        const emitUpdate = (m) => {
+        if (mediaObject) {
+            // Add unique ID for proper React re-rendering
+            const mediaWithId = {
+                ...mediaObject,
+                id: crypto.randomUUID(),
+                timestamp: Date.now() // Add timestamp for additional uniqueness
+            };
+
+            // Send media change directly (no null-first pattern)
             socket.emit('update_playback', {
                 roomCode: room.code,
                 userId: oderId,
                 action: 'media_change',
-                media: m,
+                media: mediaWithId,
                 isPlaying: false,
                 currentTime: 0
             });
-        };
 
-        // HARD RESET PIPELINE
-        // 1. Stop current media (Force unmount of players)
-        socket.emit('stop-sharing', { roomCode: room.code }); // Failsafe cleanup
-        emitUpdate(null);
-
-        // 2. Wait for browser to clear capture/iframe restrictions (Mandatory 50ms+)
-        if (mediaObject) {
-            setTimeout(() => {
-                // ADD UNIQUE ID FOR REMOUNT
-                const mediaWithId = {
-                    ...mediaObject,
-                    id: crypto.randomUUID()
-                };
-                emitUpdate(mediaWithId);
-            }, 50);
+            console.log('[SetMedia] Sent media update:', mediaWithId);
+        } else {
+            // Only clear if explicitly setting to null
+            socket.emit('update_playback', {
+                roomCode: room.code,
+                userId: oderId,
+                action: 'media_clear',
+                media: null,
+                isPlaying: false,
+                currentTime: 0
+            });
         }
     }, [room, isHost, getUserInfo]);
 

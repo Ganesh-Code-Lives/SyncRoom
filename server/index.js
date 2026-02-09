@@ -278,7 +278,10 @@ io.on('connection', (socket) => {
         }
 
         // Update room state
-        if (media !== undefined) room.media = media;
+        if (media !== undefined) {
+            room.media = media;
+            console.log(`[Playback] Media updated for room ${roomCode}:`, media ? `${media.type} - ${media.url?.substring(0, 50)}` : 'null');
+        }
         if (isPlaying !== undefined) room.isPlaying = isPlaying;
 
         // Update time if provided
@@ -297,7 +300,7 @@ io.on('connection', (socket) => {
             serverTime: Date.now()
         });
 
-        console.log(`[Playback] Room ${roomCode}: action=${action}, isPlaying=${room.isPlaying}, time=${room.currentTime}`);
+        console.log(`[Playback] Broadcasted to room ${roomCode}: action=${action}, hasMedia=${!!room.media}, isPlaying=${room.isPlaying}`);
     });
 
     // --------------------------------------

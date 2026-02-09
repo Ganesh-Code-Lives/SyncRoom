@@ -21,11 +21,15 @@
     right: 1rem;
     z-index: 50;
     opacity: 0;
+    pointer-events: none;
+    /* CRITICAL: Prevent click interception when invisible */
     transition: opacity 0.2s;
 }
 
 .media-player-container:hover .host-overlay-controls {
     opacity: 1;
+    pointer-events: auto;
+    /* Re-enable clicks when visible */
 }
 
 /* On mobile, always show controls partially or handle tap? 
@@ -35,6 +39,8 @@
 @media (max-width: 768px) {
     .host-overlay-controls {
         opacity: 1;
+        pointer-events: auto;
+        /* Enable clicks on mobile */
     }
 }
 

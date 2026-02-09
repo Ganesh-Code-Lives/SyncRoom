@@ -344,15 +344,23 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
     // Cleanup on unmount
     useEffect(() => {
         return () => {
-            if (isHost) stopSharing();
+            // CRITICAL: Don't call stopSharing() here - it clears media on every re-render!
+            // Only cleanup connections when component truly unmounts
+            const stream = streamRef.current;
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                streamRef.current = null;
+            }
+            peersRef.current.forEach(pc => pc.close());
+            peersRef.current.clear();
         };
-    }, [isHost, stopSharing]);
+    }, []);
 
     if (error) {
         return (
             <div className="shared-view-container shared-view-error">
                 <p>{error}</p>
-                <button className="change-media-btn" onClick={onClearMedia}>Back to Media Selection</button>
+                <button type="button" className="change-media-btn" onClick={onClearMedia}>Back to Media Selection</button>
             </div>
         );
     }
@@ -362,14 +370,14 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
             {isHost && (
                 <div className="host-controls-overlay">
                     {status === 'sharing' ? (
-                        <button className="shared-view-stop-btn" onClick={stopSharing} title="Stop Sharing">
+                        <button type="button" className="shared-view-stop-btn" onClick={stopSharing} title="Stop Sharing">
                             <RefreshCw size={18} />
                             <span>Stop Sharing</span>
                         </button>
                     ) : (
                         <div className="start-share-prompt">
                             <h3>Ready to Share</h3>
-                            <button className="start-share-btn" onClick={startCapture}>
+                            <button type="button" className="start-share-btn" onClick={startCapture}>
                                 <RefreshCw size={18} />
                                 <span>{error ? 'Retry Sharing' : 'Start Screen Share'}</span>
                             </button>

@@ -296,13 +296,27 @@
     padding: 0.25rem 0.75rem;
     border-radius: 99px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     border: none;
+    position: relative;
+    overflow: hidden;
 }
 
 .room-code-badge:hover {
     background: rgba(255, 255, 255, 0.1);
     color: white;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.room-code-badge:active {
+    transform: scale(0.95);
+}
+
+.room-code-badge.copied {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
 .room-action-btn {
