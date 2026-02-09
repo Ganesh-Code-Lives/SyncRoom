@@ -19,8 +19,10 @@ const ChatPanel = ({ chat, currentUser, participants, onSendMessage, onSendReact
     const [mentionFilter, setMentionFilter] = useState('');
     const [hoveredMessageId, setHoveredMessageId] = useState(null);
     const [showReactionPicker, setShowReactionPicker] = useState(null);
+    const [clickedMessageId, setClickedMessageId] = useState(null);
     const inputRef = useRef(null);
     const chatEndRef = useRef(null);
+    const reactionPickerRef = useRef(null);
 
     // Auto-scroll to bottom on new message
     useEffect(() => {
@@ -66,7 +68,31 @@ const ChatPanel = ({ chat, currentUser, participants, onSendMessage, onSendReact
     const handleReactionClick = (messageId, emoji) => {
         onSendReaction(messageId, emoji);
         setShowReactionPicker(null);
+        setClickedMessageId(null);
     };
+
+    const handleMessageClick = (messageId, e) => {
+        e.stopPropagation();
+        if (clickedMessageId === messageId) {
+            setClickedMessageId(null);
+            setShowReactionPicker(null);
+        } else {
+            setClickedMessageId(messageId);
+            setShowReactionPicker(messageId);
+        }
+    };
+
+    // Close reaction picker when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (reactionPickerRef.current && !reactionPickerRef.current.contains(event.target)) {
+                setShowReactionPicker(null);
+                setClickedMessageId(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const filteredParticipants = (participants || []).filter(p =>
         p.name.toLowerCase().includes(mentionFilter.toLowerCase())
@@ -94,20 +120,92 @@ const ChatPanel = ({ chat, currentUser, participants, onSendMessage, onSendReact
                             transition={{ duration: 0.2 }}
                             onMouseEnter={() => !isSystem && setHoveredMessageId(msg.id)}
                             onMouseLeave={() => setHoveredMessageId(null)}
+                            style={{ position: 'relative' }}
                         >
                             {isSystem ? (
                                 <span className="chat-system-text">{msg.content}</span>
-                            ) : (
+                            ) : isOwn ? (
                                 <div className="chat-message-inner">
-                                    {!isOwn && (
-                                        <div className="chat-message-meta">
-                                            <div className="chat-avatar">
-                                                {msg.senderAvatar ? (
-                                                    <img src={msg.senderAvatar} alt={msg.senderName} />
-                                                ) : (
-                                                    <span>{getInitials(msg.senderName)}</span>
-                                                )}
+                                    {/* Bubble with click-to-react support */}
+                                    <div
+                                        className="chat-bubble"
+                                        style={{ position: 'relative' }}
+                                    >
+                                        <div className="chat-bubble-content">
+                                            {msg.content.split(' ').map((word, i) => (
+                                                word.startsWith('@') ? <span key={i} className="mention-tag">{word} </span> : word + ' '
+                                            ))}
+                                        </div>
+
+                                        {/* Reactions Display - Always visible when reactions exist */}
+                                        {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                                            <div className="message-reactions-bar">
+                                                {Object.entries(msg.reactions).map(([emoji, data]) => (
+                                                    data.count > 0 && (
+                                                        <button
+                                                            key={emoji}
+                                                            className="reaction-badge-stuck"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleReactionClick(msg.id, emoji);
+                                                            }}
+                                                            title={`${data.count} reaction${data.count > 1 ? 's' : ''}`}
+                                                        >
+                                                            <span className="reaction-emoji">{emoji}</span>
+                                                            <span className="reaction-count">{data.count}</span>
+                                                        </button>
+                                                    )
+                                                ))}
+                                                <button
+                                                    className="add-reaction-btn"
+                                                    onClick={(e) => handleMessageClick(msg.id, e)}
+                                                    title="Add reaction"
+                                                >
+                                                    <Smile size={14} />
+                                                </button>
                                             </div>
+                                        )}
+
+                                        {/* Show "Add Reaction" button if no reactions yet */}
+                                        {(!msg.reactions || Object.keys(msg.reactions).length === 0) && (
+                                            <button
+                                                className="add-reaction-btn-empty"
+                                                onClick={(e) => handleMessageClick(msg.id, e)}
+                                                title="Add reaction"
+                                            >
+                                                <Smile size={14} />
+                                            </button>
+                                        )}
+
+                                        {/* Reaction Picker on Click */}
+                                        {showReactionPicker === msg.id && (
+                                            <div className="reaction-picker-popup" ref={reactionPickerRef}>
+                                                {REACTION_EMOJIS.map(emoji => (
+                                                    <button
+                                                        key={emoji}
+                                                        className="reaction-picker-emoji-btn"
+                                                        onClick={() => handleReactionClick(msg.id, emoji)}
+                                                        title={`React with ${emoji}`}
+                                                    >
+                                                        {emoji}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ) : (
+                                <>
+                                    {/* Avatar positioned outside message container */}
+                                    <div className="chat-avatar">
+                                        {msg.senderAvatar ? (
+                                            <img src={msg.senderAvatar} alt={msg.senderName} />
+                                        ) : (
+                                            <span>{getInitials(msg.senderName)}</span>
+                                        )}
+                                    </div>
+                                    <div className="chat-message-inner">
+                                        <div className="chat-message-meta">
                                             <div className="chat-meta-header">
                                                 <span className="chat-sender-name">{msg.senderName}</span>
                                                 {senderParticipant?.isHost && (
@@ -122,81 +220,75 @@ const ChatPanel = ({ chat, currentUser, participants, onSendMessage, onSendReact
                                                 )}
                                             </div>
                                         </div>
-                                    )}
-                                    {/* Bubble with click-to-react support */}
-                                    <div
-                                        className="chat-bubble"
-                                        style={{ position: 'relative', cursor: 'pointer' }}
-                                        onClick={(e) => {
-                                            // Toggle picker on click (Mobile friendly)
-                                            if (!isSystem) {
-                                                e.stopPropagation();
-                                                setHoveredMessageId(hoveredMessageId === msg.id ? null : msg.id);
-                                            }
-                                        }}
-                                    >
-                                        <div className="chat-bubble-content">
-                                            {msg.content.split(' ').map((word, i) => (
-                                                word.startsWith('@') ? <span key={i} className="mention-tag">{word} </span> : word + ' '
-                                            ))}
-                                        </div>
+                                        {/* Bubble with click-to-react support */}
+                                        <div
+                                            className="chat-bubble"
+                                            style={{ position: 'relative' }}
+                                        >
+                                            <div className="chat-bubble-content">
+                                                {msg.content.split(' ').map((word, i) => (
+                                                    word.startsWith('@') ? <span key={i} className="mention-tag">{word} </span> : word + ' '
+                                                ))}
+                                            </div>
 
-                                        {/* Reaction Display */}
-                                        {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                                            <div style={{
-                                                display: 'flex',
-                                                gap: '4px',
-                                                marginTop: '4px',
-                                                flexWrap: 'wrap'
-                                            }}>
-                                                {Object.entries(msg.reactions).map(([emoji, data]) => (
-                                                    data.count > 0 && (
+                                            {/* Reactions Display - Always visible when reactions exist */}
+                                            {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                                                <div className="message-reactions-bar">
+                                                    {Object.entries(msg.reactions).map(([emoji, data]) => (
+                                                        data.count > 0 && (
+                                                            <button
+                                                                key={emoji}
+                                                                className="reaction-badge-stuck"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleReactionClick(msg.id, emoji);
+                                                                }}
+                                                                title={`${data.count} reaction${data.count > 1 ? 's' : ''}`}
+                                                            >
+                                                                <span className="reaction-emoji">{emoji}</span>
+                                                                <span className="reaction-count">{data.count}</span>
+                                                            </button>
+                                                        )
+                                                    ))}
+                                                    <button
+                                                        className="add-reaction-btn"
+                                                        onClick={(e) => handleMessageClick(msg.id, e)}
+                                                        title="Add reaction"
+                                                    >
+                                                        <Smile size={14} />
+                                                    </button>
+                                                </div>
+                                            )}
+
+                                            {/* Show "Add Reaction" button if no reactions yet */}
+                                            {(!msg.reactions || Object.keys(msg.reactions).length === 0) && (
+                                                <button
+                                                    className="add-reaction-btn-empty"
+                                                    onClick={(e) => handleMessageClick(msg.id, e)}
+                                                    title="Add reaction"
+                                                >
+                                                    <Smile size={14} />
+                                                </button>
+                                            )}
+
+                                            {/* Reaction Picker on Click */}
+                                            {showReactionPicker === msg.id && (
+                                                <div className="reaction-picker-popup" ref={reactionPickerRef}>
+                                                    {REACTION_EMOJIS.map(emoji => (
                                                         <button
                                                             key={emoji}
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleReactionClick(msg.id, emoji);
-                                                            }}
-                                                            style={{
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                gap: '2px',
-                                                                padding: '2px 6px',
-                                                                borderRadius: '12px',
-                                                                background: 'rgba(88, 101, 242, 0.15)',
-                                                                border: '1px solid rgba(88, 101, 242, 0.3)',
-                                                                fontSize: '0.75rem',
-                                                                cursor: 'pointer',
-                                                                transition: 'all 0.2s'
-                                                            }}
-                                                            onMouseEnter={(e) => e.target.style.background = 'rgba(88, 101, 242, 0.25)'}
-                                                            onMouseLeave={(e) => e.target.style.background = 'rgba(88, 101, 242, 0.15)'}
+                                                            className="reaction-picker-emoji-btn"
+                                                            onClick={() => handleReactionClick(msg.id, emoji)}
+                                                            title={`React with ${emoji}`}
                                                         >
-                                                            <span>{emoji}</span>
-                                                            <span style={{ color: '#a5b4fc' }}>{data.count}</span>
+                                                            {emoji}
                                                         </button>
-                                                    )
-                                                ))}
-                                            </div>
-                                        )}
-
-                                        {/* Reaction Picker on Hover - Uses CSS Class for stability */}
-                                        {hoveredMessageId === msg.id && (
-                                            <div className="mini-reaction-picker">
-                                                {REACTION_EMOJIS.map(emoji => (
-                                                    <button
-                                                        key={emoji}
-                                                        onClick={() => handleReactionClick(msg.id, emoji)}
-                                                        className="reaction-picker-btn"
-                                                        title={`React with ${emoji}`}
-                                                    >
-                                                        {emoji}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        )}
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
-                                </div>
+                                </>
                             )}
                         </motion.div>
                     );

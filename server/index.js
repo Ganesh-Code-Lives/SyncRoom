@@ -149,12 +149,15 @@ io.on('connection', (socket) => {
                 socketId: socket.id
             });
 
-            // Add system message
-            room.chat.push({
-                id: Date.now(),
+            // Add system message and broadcast it
+            const systemMessage = {
+                id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
                 type: 'system',
-                content: `${userName} joined the room`
-            });
+                content: `${userName} joined the room`,
+                timestamp: new Date().toISOString()
+            };
+            room.chat.push(systemMessage);
+            io.to(roomCode).emit('new_message', systemMessage);
         }
 
         console.log(`[Room] ${userName} ${isReconnect ? 'reconnected to' : 'joined'}: ${roomCode}`);
@@ -202,7 +205,7 @@ io.on('connection', (socket) => {
         if (!room) return;
 
         const newMessage = {
-            id: Date.now(),
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${socket.id.substr(0, 6)}`,
             senderId: message.senderId,
             senderName: message.senderName,
             senderAvatar: message.senderAvatar,

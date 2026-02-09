@@ -154,9 +154,23 @@ export const RoomProvider = ({ children }) => {
         };
 
         const handleUserJoined = (data) => {
+            console.log('[RoomContext] User joined:', data);
             showInfo(`${data.userName} joined`);
             setParticipants(prev => {
-                if (prev.find(p => p.oderId === data.userId)) return prev;
+                // Check if user already exists
+                const exists = prev.find(p => p.oderId === data.userId);
+                if (exists) {
+                    // Update existing user's socket ID if needed
+                    if (exists.id !== data.socketId) {
+                        return prev.map(p => 
+                            p.oderId === data.userId 
+                                ? { ...p, id: data.socketId || socket.id }
+                                : p
+                        );
+                    }
+                    return prev;
+                }
+                // Add new participant
                 return [...prev, {
                     id: data.socketId || socket.id,
                     oderId: data.userId,
@@ -176,9 +190,43 @@ export const RoomProvider = ({ children }) => {
         };
 
         const handleNewMessage = (message) => {
+            console.log('[RoomContext] New message received:', message);
             setChat(prev => {
-                // Prevent duplicate messages
-                if (prev.find(m => m.id === message.id)) return prev;
+                // For system messages, only check ID duplicates
+                if (message.type === 'system') {
+                    if (prev.find(m => m.id === message.id)) {
+                        console.log('[RoomContext] Duplicate system message filtered:', message.id);
+                        return prev;
+                    }
+                    return [...prev, message];
+                }
+                
+                // Check if this replaces an optimistic message (only for user messages from current user)
+                const currentUserId = user?.uid || sessionStorage.getItem('syncroom_guest_id');
+                if (message.senderId === currentUserId) {
+                    const optimisticIndex = prev.findIndex(m => 
+                        m.isOptimistic && 
+                        m.senderId === message.senderId && 
+                        m.content === message.content &&
+                        Math.abs(new Date(m.timestamp) - new Date(message.timestamp)) < 5000
+                    );
+                    
+                    if (optimisticIndex !== -1) {
+                        console.log('[RoomContext] Replacing optimistic message with server message');
+                        // Replace optimistic message with server message
+                        const updated = [...prev];
+                        updated[optimisticIndex] = message;
+                        return updated;
+                    }
+                }
+                
+                // Check for duplicates by ID only (don't filter by content for other users' messages)
+                if (prev.find(m => m.id === message.id)) {
+                    console.log('[RoomContext] Duplicate message filtered by ID:', message.id);
+                    return prev;
+                }
+                
+                console.log('[RoomContext] Adding new message to chat');
                 return [...prev, message];
             });
         };
@@ -265,7 +313,7 @@ export const RoomProvider = ({ children }) => {
             socket.off('message_reaction_update', handleMessageReactionUpdate);
             socket.disconnect();
         };
-    }, [navigate, showError, showInfo, showSuccess, getUserInfo]);
+    }, [navigate, showError, showInfo, showSuccess, getUserInfo, user, isGuest]);
 
     // ============================================
     // ROOM ACTIONS
@@ -389,7 +437,24 @@ export const RoomProvider = ({ children }) => {
     const sendMessage = useCallback((text) => {
         if (!room) return;
         const { oderId, userName, userAvatar } = getUserInfo();
+        
+        // Optimistic update - show message immediately
+        const tempId = `temp-${Date.now()}-${Math.random()}`;
+        const optimisticMessage = {
+            id: tempId,
+            senderId: oderId,
+            senderName: userName,
+            senderAvatar: userAvatar,
+            content: text,
+            timestamp: new Date().toISOString(),
+            type: 'user',
+            reactions: {},
+            isOptimistic: true // Flag to identify temporary messages
+        };
+        
+        setChat(prev => [...prev, optimisticMessage]);
 
+        // Send to server
         socket.emit('send_message', {
             roomCode: room.code,
             message: {
@@ -399,6 +464,9 @@ export const RoomProvider = ({ children }) => {
                 content: text
             }
         });
+        
+        // Replace optimistic message with server message when received
+        // (handled in handleNewMessage by matching content + senderId)
     }, [room, getUserInfo]);
 
     const addMessageReaction = useCallback((messageId, emoji) => {
