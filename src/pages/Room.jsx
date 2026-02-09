@@ -14,6 +14,7 @@ import MediaSelector from '../components/MediaSelector';
 import ChatPanel from '../components/ChatPanel';
 import Playlist from '../components/Playlist';
 import MediaPlayer from '../components/MediaPlayer';
+import FullscreenChatOverlay from '../components/FullscreenChatOverlay';
 
 const Room = () => {
     const { roomId } = useParams();
@@ -23,17 +24,54 @@ const Room = () => {
         room, currentUser, currentMedia, setMedia, clearMedia, playback, chat, participants, voiceParticipants, activeReaction,
         sendMessage, updatePlayback, toggleVoice, sendReaction,
         isLocked, isHost, toggleLock, kickParticipant, muteParticipant, addMessageReaction,
-        playlist, addToQueue, voteSkip, removeFromQueue, transferHost
+        playlist, addToQueue, voteSkip, removeFromQueue, transferHost,
+        isRoomLoaded, loadingStatus, joinRoom // <--- Destructure joinRoom for URL handling!
     } = useRoom();
 
     const playerRef = useRef(null);
+    // State for UI
+    const [sidebarTab, setSidebarTab] = useState(() => sessionStorage.getItem('syncroom_sidebar_tab') || 'chat');
+    const [isSidePanelVisible, setIsSidePanelVisible] = useState(true); // Desktop sidebar toggle
     const [showMobileChat, setShowMobileChat] = useState(false);
     const [showMobileSettings, setShowMobileSettings] = useState(false);
     const [copied, setCopied] = useState(false);
-    const [sidebarTab, setSidebarTab] = useState('chat'); // 'chat' | 'queue' | 'members'
-    const [isSidePanelVisible, setIsSidePanelVisible] = useState(true); // Desktop sidebar toggle
     const [mobileMessage, setMobileMessage] = useState('');
     const { success, info } = useToast();
+
+    useEffect(() => {
+        sessionStorage.setItem('syncroom_sidebar_tab', sidebarTab);
+    }, [sidebarTab]);
+
+    // Handle URL-based Room Joining (Deep Linking)
+    useEffect(() => {
+        if (!roomId) return;
+
+        // If context has fully loaded a room
+        if (isRoomLoaded && room) {
+            // Check for mismatch (e.g., auto-rejoin joined 'A', but URL is 'B')
+            if (room.code !== roomId) {
+                console.log(`[Room] Mismatch detected. Joined ${room.code}, but URL is ${roomId}. Switching...`);
+                // leaveRoom(); // Optional: clean up old room first? Context usually handles switch.
+                joinRoom(roomId).catch(err => {
+                    console.error("Failed to switch room:", err);
+                    // navigate('/'); // Optional: redirect on fail
+                });
+            }
+        }
+        // If room is NOT loaded yet, and we are not already trying to re-join the *correct* room
+        else if (!isRoomLoaded && loadingStatus === 'Initializing...') {
+            // Wait a tick for socket to init, or just trigger it.
+            // But wait, context auto-rejoin might race.
+            // If sessionStorage matches roomId, auto-rejoin handles it.
+            // If sessionStorage is different or empty, we must trigger join.
+
+            const stored = sessionStorage.getItem('syncroom_last_room');
+            if (stored !== roomId) {
+                console.log(`[Room] Initial Join via URL: ${roomId}`);
+                joinRoom(roomId).catch(err => console.error("Join failed:", err));
+            }
+        }
+    }, [roomId, room, isRoomLoaded, loadingStatus, joinRoom]);
 
     const handleMobileSendMessage = () => {
         if (mobileMessage.trim()) {
@@ -58,7 +96,15 @@ const Room = () => {
         setIsSidePanelVisible(!isSidePanelVisible);
     };
 
-    if (!room) return <div className="loading-screen">Loading Room...</div>;
+    if (!isRoomLoaded) {
+        // Safe access to loadingStatus from context, default to "Loading..."
+        const status = loadingStatus || "Loading Room...";
+        return <div className="loading-screen">{status}</div>;
+    }
+
+    if (!room) {
+        return <div className="loading-screen">Joining Room...</div>;
+    }
 
     const isVoiceActive = voiceParticipants.some(p => p.id === currentUser?.id);
 
@@ -111,8 +157,30 @@ const Room = () => {
                                 </button>
                             </div>
 
+                            {/* MEMBERS JOINED SECTION */}
+                            <div className="mobile-settings-members">
+                                <h4 style={{ margin: '0.5rem 0', fontSize: '0.9rem', color: '#94a3b8' }}>Members ({participants.length})</h4>
+                                <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                    {participants.map(p => (
+                                        <div key={p.oderId || p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                                            <img src={p.avatar} alt={p.name} style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontSize: '0.9rem', fontWeight: '500' }}>
+                                                    {p.name} {p.id === currentUser?.id && '(You)'}
+                                                </div>
+                                                {p.isHost && (
+                                                    <span style={{ fontSize: '0.7rem', color: '#fbbf24', background: 'rgba(251, 191, 36, 0.1)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                                        HOST
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
                             {isHost && (
-                                <button onClick={toggleLock} style={{ padding: '0.75rem', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: 'none', color: 'white', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                <button onClick={toggleLock} style={{ padding: '0.75rem', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: 'none', color: 'white', display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'center' }}>
                                     {isLocked ? <Lock size={16} /> : <Unlock size={16} />}
                                     {isLocked ? 'Unlock Room' : 'Lock Room'}
                                 </button>
@@ -143,22 +211,18 @@ const Room = () => {
                                 media={currentMedia}
                                 isHost={isHost}
                                 onClearMedia={clearMedia}
-                            />
+                            >
+                                <FullscreenChatOverlay
+                                    chat={chat}
+                                    currentUser={currentUser}
+                                    participants={participants}
+                                    onSendMessage={sendMessage}
+                                    onSendReaction={addMessageReaction}
+                                />
+                            </MediaPlayer>
                         )}
 
-                        {/* Reactions Layer */}
-                        <AnimatePresence>
-                            {activeReaction && (
-                                <motion.div
-                                    className="reaction-overlay"
-                                    initial={{ opacity: 0, y: 0, scale: 0.5 }}
-                                    animate={{ opacity: 1, y: -100, scale: 1.5 }}
-                                    exit={{ opacity: 0, y: -200 }}
-                                >
-                                    <span className="floating-emoji">{activeReaction.emoji}</span>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
+
                     </div>
                 </div>
 
@@ -199,6 +263,17 @@ const Room = () => {
                     </div>
                 </div>
             </div>
+
+            {/* MOBILE FLOATING CHAT BUTTON */}
+            {!showMobileChat && (
+                <button
+                    className="mobile-chat-fab"
+                    onClick={() => setShowMobileChat(true)}
+                >
+                    <MessageCircle size={24} />
+                    {chat.length > 0 && <span className="chat-badge-dot"></span>}
+                </button>
+            )}
 
             {/* DESKTOP SIDEBAR */}
             <div className={classNames("room-sidebar", {
@@ -241,19 +316,42 @@ const Room = () => {
 
                 <div className="sidebar-content">
                     {sidebarTab === 'chat' && <ChatPanel chat={chat} currentUser={currentUser} participants={participants} onSendMessage={sendMessage} onSendReaction={addMessageReaction} />}
-                    {sidebarTab === 'members' && <div className="members-panel">{participants.map(p => <div key={p.oderId} className="member-item">{p.name} {p.isHost && '👑'}</div>)}</div>}
+                    {sidebarTab === 'members' && (
+                        <div className="members-panel">
+                            {participants.map(p => (
+                                <div key={p.oderId} className="member-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', marginBottom: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <span>{p.name}</span>
+                                        {p.isHost && <Crown size={14} style={{ color: '#f59e0b' }} />}
+                                    </div>
+                                    {isHost && !p.isHost && (
+                                        <button
+                                            onClick={() => transferHost(p.oderId)}
+                                            style={{
+                                                background: 'rgba(139, 92, 246, 0.2)',
+                                                color: '#a78bfa',
+                                                border: '1px solid #8b5cf6',
+                                                padding: '0.25rem 0.5rem',
+                                                borderRadius: '4px',
+                                                fontSize: '0.75rem',
+                                                cursor: 'pointer'
+                                            }}
+                                            title="Transfer Host"
+                                        >
+                                            Make Host
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     {sidebarTab === 'queue' && <Playlist playlist={playlist} currentMedia={currentMedia} onPlay={setMedia} onRemove={removeFromQueue} onVoteSkip={voteSkip} isHost={isHost} />}
                 </div>
             </div>
 
             {/* MOBILE FABS */}
             <div className="mobile-fabs" style={{ display: showMobileChat ? 'none' : 'flex' }}>
-                <button
-                    className="fab-btn"
-                    onClick={() => setShowMobileChat(!showMobileChat)}
-                >
-                    {showMobileChat ? <X size={24} /> : <MessageCircle size={24} />}
-                </button>
+
             </div>
         </div>
     );

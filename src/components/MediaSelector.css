@@ -7,6 +7,24 @@
     padding: 2rem;
 }
 
+@media (max-width: 768px) {
+    .media-selector-container {
+        padding: 0.5rem;
+    }
+
+    .selector-header {
+        padding: 1rem;
+    }
+
+    .input-section {
+        padding: 1rem;
+    }
+
+    .action-footer {
+        padding: 1rem;
+    }
+}
+
 .media-selector-card {
     width: 100%;
     max-width: 500px;

@@ -5,7 +5,7 @@ import { useRoom } from '../context/RoomContext';
 import SharedViewPlayer from './SharedViewPlayer';
 import './MediaPlayer.css';
 
-const MediaPlayer = ({ media, isHost, onClearMedia }) => {
+const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
     const playerRef = useRef(null);
     const { playback, updatePlayback } = useRoom();
     const [showFallback, setShowFallback] = useState(false);
@@ -44,6 +44,7 @@ const MediaPlayer = ({ media, isHost, onClearMedia }) => {
                     isHost={isHost}
                     onClearMedia={onClearMedia}
                 />
+                {children}
             </div>
         );
     }
@@ -164,6 +165,7 @@ const MediaPlayer = ({ media, isHost, onClearMedia }) => {
                         <Maximize size={24} />
                     </button>
                 )}
+                {children}
             </div>
         );
     }
@@ -215,6 +217,7 @@ const MediaPlayer = ({ media, isHost, onClearMedia }) => {
                     <Maximize size={24} />
                 </button>
             )}
+            {children}
         </div>
     );
 };

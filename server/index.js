@@ -24,6 +24,7 @@ const io = new Server(httpServer, {
 // IN-MEMORY ROOM STORAGE
 // ============================================
 const rooms = new Map();
+const disconnectTimers = new Map(); // Track pending disconnects for debounce
 
 // Generate unique 6-character room code
 const generateRoomCode = () => {
@@ -109,8 +110,18 @@ io.on('connection', (socket) => {
             console.log(`[Room] saved from deletion: ${roomCode}`);
         }
 
+        // Cancel disconnect timer if user is reconnecting
+        const disconnectKey = `${roomCode}-${userId}`;
+        if (disconnectTimers.has(disconnectKey)) {
+            clearTimeout(disconnectTimers.get(disconnectKey));
+            disconnectTimers.delete(disconnectKey);
+            console.log(`[Room] ${userName} reconnected, cancelled disconnect timer`);
+        }
+
         // Check if user is already in the room
         const existingUser = room.users.find(u => u.oderId === userId);
+        const isReconnect = !!existingUser;
+
         if (existingUser) {
             // Update socket ID for reconnection
             existingUser.id = socket.id;
@@ -128,24 +139,50 @@ io.on('connection', (socket) => {
         socket.join(roomCode);
         socket.roomCode = roomCode;
 
-        // Notify others (include socketId for WebRTC screen share)
-        socket.to(roomCode).emit('user_joined', {
-            userId,
-            userName,
-            userAvatar,
-            socketId: socket.id
+        // Notify others only if this is a new join (not reconnect)
+        if (!isReconnect) {
+            socket.to(roomCode).emit('user_joined', {
+                userId,
+                userName,
+                userAvatar,
+                socketId: socket.id
+            });
+
+            // Add system message
+            room.chat.push({
+                id: Date.now(),
+                type: 'system',
+                content: `${userName} joined the room`
+            });
+        }
+
+        console.log(`[Room] ${userName} ${isReconnect ? 'reconnected to' : 'joined'}: ${roomCode}`);
+
+        // Calculate drift-corrected currentTime for late joiners
+        let syncedCurrentTime = room.currentTime;
+        if (room.isPlaying && room.media) {
+            const elapsed = (Date.now() - room.lastSyncTime) / 1000;
+            syncedCurrentTime = room.currentTime + elapsed;
+        }
+
+        callback({
+            success: true,
+            room: {
+                ...room,
+                currentTime: syncedCurrentTime // Send drift-corrected time
+            }
         });
 
-        // Add system message
-        room.chat.push({
-            id: Date.now(),
-            type: 'system',
-            content: `${userName} joined the room`
-        });
-
-        console.log(`[Room] ${userName} joined: ${roomCode}`);
-
-        callback({ success: true, room });
+        // Send immediate playback sync for late joiners
+        if (room.media && !isReconnect) {
+            socket.emit('playback_sync', {
+                action: 'late_join_sync',
+                media: room.media,
+                isPlaying: room.isPlaying,
+                currentTime: syncedCurrentTime,
+                serverTime: Date.now()
+            });
+        }
     });
 
     // --------------------------------------
@@ -170,13 +207,56 @@ io.on('connection', (socket) => {
             senderAvatar: message.senderAvatar,
             content: message.content,
             timestamp: new Date().toISOString(),
-            type: 'user'
+            type: 'user',
+            reactions: {} // Initialize empty reactions object
         };
 
         room.chat.push(newMessage);
 
         // Broadcast to all in room
         io.to(roomCode).emit('new_message', newMessage);
+    });
+
+    // --------------------------------------
+    // MESSAGE REACTIONS
+    // --------------------------------------
+    socket.on('add_message_reaction', (data) => {
+        const { roomCode, messageId, emoji, userId } = data;
+        const room = rooms.get(roomCode);
+        if (!room) return;
+
+        const message = room.chat.find(m => m.id === messageId);
+        if (!message) return;
+
+        // Initialize reactions if not exists
+        if (!message.reactions) message.reactions = {};
+
+        // Initialize emoji count if not exists
+        if (!message.reactions[emoji]) {
+            message.reactions[emoji] = { count: 0, users: [] };
+        }
+
+        // Check if user already reacted with this emoji
+        const userIndex = message.reactions[emoji].users.indexOf(userId);
+        if (userIndex === -1) {
+            // Add reaction
+            message.reactions[emoji].count++;
+            message.reactions[emoji].users.push(userId);
+        } else {
+            // Remove reaction (toggle)
+            message.reactions[emoji].count--;
+            message.reactions[emoji].users.splice(userIndex, 1);
+            // Clean up if count is 0
+            if (message.reactions[emoji].count === 0) {
+                delete message.reactions[emoji];
+            }
+        }
+
+        // Broadcast updated message to all users
+        io.to(roomCode).emit('message_reaction_update', {
+            messageId,
+            reactions: message.reactions
+        });
     });
 
     // --------------------------------------
@@ -353,7 +433,33 @@ io.on('connection', (socket) => {
         const { roomCode, userId } = data;
         const room = rooms.get(roomCode);
         if (!room || room.hostId !== userId) return;
+
+        // UPDATE STATE
+        room.media = {
+            type: 'shared',
+            url: null,
+            hostId: userId,
+            startedAt: Date.now()
+        };
+        room.isPlaying = true; // Considered "playing" when sharing
+
+        room.chat.push({
+            id: Date.now(),
+            type: 'system',
+            content: 'Host started screen sharing'
+        });
+        io.to(roomCode).emit('new_message', room.chat[room.chat.length - 1]);
+
         socket.to(roomCode).emit('screen_share_started', { hostSocketId: socket.id });
+
+        // Also emit playback update so clients switch modes if they are on Youtube
+        io.to(roomCode).emit('playback_update', {
+            action: 'media_change',
+            media: room.media,
+            isPlaying: true,
+            currentTime: 0,
+            serverTime: Date.now()
+        });
     });
 
     socket.on('screen_share_ready', (data) => {
@@ -403,11 +509,46 @@ io.on('connection', (socket) => {
     });
 
     // --------------------------------------
-    // DISCONNECT
+    // EMOJI REACTIONS
+    // --------------------------------------
+    socket.on('send_reaction', (data) => {
+        const { roomCode, emoji, userId, userName } = data;
+        const room = rooms.get(roomCode);
+        if (!room) return;
+
+        // Broadcast reaction to all users in room
+        io.to(roomCode).emit('reaction_received', {
+            emoji,
+            userId,
+            userName,
+            timestamp: Date.now()
+        });
+    });
+
+    // --------------------------------------
+    // DISCONNECT (with debounce)
     // --------------------------------------
     socket.on('disconnect', () => {
         console.log(`[Socket] User disconnected: ${socket.id}`);
-        handleUserLeave(socket);
+
+        const roomCode = socket.roomCode;
+        if (!roomCode) return;
+
+        const room = rooms.get(roomCode);
+        if (!room) return;
+
+        const user = room.users.find(u => u.id === socket.id);
+        if (!user) return;
+
+        // Set 3-second debounce timer before confirming disconnect
+        const disconnectKey = `${roomCode}-${user.oderId}`;
+        const timer = setTimeout(() => {
+            handleUserLeave(socket);
+            disconnectTimers.delete(disconnectKey);
+        }, 10000); // 10 second grace period for reloads
+
+        disconnectTimers.set(disconnectKey, timer);
+        console.log(`[Socket] Set disconnect timer for ${user.name} (3s grace period)`);
     });
 });
 

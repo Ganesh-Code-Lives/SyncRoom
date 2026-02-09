@@ -61,6 +61,14 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
 
         try {
             const offer = await pc.createOffer();
+
+            // Increase bitrate for better quality (4 Mbps video)
+            const modifiedSdp = offer.sdp.replace(
+                /(m=video.*\r\n)/,
+                '$1b=AS:4000\r\n'
+            );
+            offer.sdp = modifiedSdp;
+
             await pc.setLocalDescription(offer);
             socket.emit('screen_share_offer', { to: memberSocketId, offer });
         } catch (err) {
@@ -70,42 +78,57 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
     }, [roomCode]);
 
     // Host: capture stream
-    useEffect(() => {
+    const startCapture = useCallback(async () => {
         if (!isHost || !roomCode) return;
 
-        const startCapture = async () => {
-            try {
-                setStatus('capturing');
-                const stream = await navigator.mediaDevices.getDisplayMedia({
-                    video: true,
-                    audio: true
-                });
-                streamRef.current = stream;
-
-                stream.getVideoTracks()[0]?.addEventListener('ended', () => {
-                    stopSharing();
-                });
-
-                if (videoRef.current) {
-                    videoRef.current.srcObject = stream;
+        try {
+            setStatus('capturing');
+            const stream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    displaySurface: 'browser', // Hint for tab capture (not enforced)
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                    frameRate: { ideal: 60 }
+                },
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false
                 }
+            });
+            streamRef.current = stream;
 
-                socket.emit('screen_share_start', {
-                    roomCode,
-                    userId: room.hostId
-                });
+            stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+                stopSharing();
+            });
 
-                setStatus('sharing');
-            } catch (err) {
-                setError(err.message || 'Failed to share screen');
-                setStatus('idle');
-                onClearMedia?.();
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
             }
-        };
 
-        startCapture();
-        return () => {};
-    }, [isHost, roomCode, room?.hostId, stopSharing, onClearMedia]);
+            socket.emit('screen_share_start', {
+                roomCode,
+                userId: room.hostId
+            });
+
+            setStatus('sharing');
+        } catch (err) {
+            console.error("Screen Share Error:", err);
+            setError(err.message || 'Failed to share screen');
+            setStatus('idle');
+            // Don't auto-clear media, let user retry or cancel
+        }
+    }, [isHost, roomCode, room?.hostId, stopSharing]);
+
+    // Auto-start / Re-negotiate on mount for members
+    useEffect(() => {
+        if (!isHost && roomCode) {
+            console.log('[SharedView] Joining active stream, requesting offer...');
+            socket.emit('screen_share_ready', { roomCode });
+        }
+        // Just clear error if we change host status
+        if (!isHost) setError(null);
+    }, [isHost, roomCode]);
 
     // Host: handle member ready - create offer when they request
     useEffect(() => {
@@ -156,7 +179,7 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
                 const cand = memberIceQueueRef.current.shift();
                 try {
                     await pc.addIceCandidate(new RTCIceCandidate(cand));
-                } catch (e) {}
+                } catch (e) { }
             }
         };
 
@@ -191,6 +214,14 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
                 await flushIceQueue(pc);
 
                 const answer = await pc.createAnswer();
+
+                // Increase bitrate for better quality on member side
+                const modifiedSdp = answer.sdp.replace(
+                    /(m=video.*\r\n)/,
+                    '$1b=AS:4000\r\n'
+                );
+                answer.sdp = modifiedSdp;
+
                 await pc.setLocalDescription(answer);
                 socket.emit('screen_share_answer', { to: from, answer });
             } catch (err) {
@@ -205,7 +236,7 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
             if (pc) {
                 try {
                     await pc.setRemoteDescription(new RTCSessionDescription(answer));
-                } catch (e) {}
+                } catch (e) { }
             }
         };
 
@@ -218,7 +249,7 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
             if (pc.remoteDescription) {
                 try {
                     await pc.addIceCandidate(new RTCIceCandidate(candidate));
-                } catch (e) {}
+                } catch (e) { }
             } else {
                 memberIceQueueRef.current.push(candidate);
             }
@@ -272,7 +303,7 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
                 if (pc) {
                     try {
                         await pc.addIceCandidate(new RTCIceCandidate(cand));
-                    } catch (e) {}
+                    } catch (e) { }
                 }
             }
         };
@@ -283,7 +314,7 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
                 try {
                     await pc.setRemoteDescription(new RTCSessionDescription(answer));
                     await flushIceQueue(from);
-                } catch (e) {}
+                } catch (e) { }
             }
         };
 
@@ -293,7 +324,7 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
             if (pc.remoteDescription) {
                 try {
                     await pc.addIceCandidate(new RTCIceCandidate(candidate));
-                } catch (e) {}
+                } catch (e) { }
             } else {
                 const queue = hostIceQueuesRef.current.get(from) || [];
                 queue.push(candidate);
@@ -329,10 +360,22 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
     return (
         <div className="shared-view-container">
             {isHost && (
-                <button className="shared-view-stop-btn" onClick={stopSharing} title="Stop Sharing">
-                    <RefreshCw size={18} />
-                    <span>Stop Sharing</span>
-                </button>
+                <div className="host-controls-overlay">
+                    {status === 'sharing' ? (
+                        <button className="shared-view-stop-btn" onClick={stopSharing} title="Stop Sharing">
+                            <RefreshCw size={18} />
+                            <span>Stop Sharing</span>
+                        </button>
+                    ) : (
+                        <div className="start-share-prompt">
+                            <h3>Ready to Share</h3>
+                            <button className="start-share-btn" onClick={startCapture}>
+                                <RefreshCw size={18} />
+                                <span>{error ? 'Retry Sharing' : 'Start Screen Share'}</span>
+                            </button>
+                        </div>
+                    )}
+                </div>
             )}
 
             <div className="shared-view-video-wrapper">
@@ -347,13 +390,13 @@ export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
             </div>
 
             {status === 'capturing' && (
-                <div className="shared-view-status">Select browser tab and enable &quot;Share tab audio&quot;</div>
+                <div className="shared-view-status">Select a BROWSER TAB and enable "Share tab audio" for best quality</div>
             )}
             {status === 'waiting' && !isHost && (
                 <div className="shared-view-status">Waiting for host to start sharing...</div>
             )}
             {status === 'connecting' && !isHost && (
-                <div className="shared-view-status">Connecting...</div>
+                <div className="shared-view-status">Do not refresh... connecting to stream...</div>
             )}
             {status === 'stopped' && !isHost && (
                 <div className="shared-view-status">Host stopped sharing.</div>

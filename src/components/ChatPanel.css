@@ -207,6 +207,19 @@
     background: var(--bg-deep);
 }
 
+/* Animation keyframes */
+@keyframes popIn {
+    0% {
+        opacity: 0;
+        transform: scale(0.8) translateY(5px);
+    }
+
+    100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
 .mini-reaction-picker {
     position: absolute;
     bottom: 100%;
@@ -217,15 +230,34 @@
     border-radius: 8px;
     display: none;
     gap: 4px;
+    /* Fixes */
+    z-index: 50;
+    margin-bottom: 5px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    pointer-events: auto;
 }
 
-.icon-btn:hover .mini-reaction-picker {
+/* Invisible bridge to prevent hover loss */
+.mini-reaction-picker::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%;
+    height: 10px;
+}
+
+.icon-btn:hover .mini-reaction-picker,
+.mini-reaction-picker:hover {
     display: flex;
 }
 
 .mini-reaction-picker span {
     cursor: pointer;
     transition: transform 0.2s;
+    font-size: 1.2rem;
+    padding: 2px;
 }
 
 .mini-reaction-picker span:hover {
@@ -248,6 +280,8 @@
     border-radius: 20px;
     padding: 4px;
     border: 1px solid rgba(255, 255, 255, 0.05);
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .emoji-trigger-btn {
@@ -351,8 +385,24 @@
 }
 
 /* Responsive */
+
 @media (max-width: 640px) {
     .chat-message {
         max-width: 85%;
     }
+}
+
+/* New button style for class-based picker */
+.reaction-picker-btn {
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 2px;
+    transition: transform 0.2s;
+    line-height: 1;
+}
+
+.reaction-picker-btn:hover {
+    transform: scale(1.3);
 }

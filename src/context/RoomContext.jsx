@@ -28,14 +28,24 @@ export const RoomProvider = ({ children }) => {
     const [isHost, setIsHost] = useState(false);
     const [connectionError, setConnectionError] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
+    const [activeReaction, setActiveReaction] = useState(null);
+    const [isRoomLoaded, setIsRoomLoaded] = useState(false);
+    const [loadingStatus, setLoadingStatus] = useState('Initializing...'); // 'Initializing' | 'Connecting' | 'Rejoining' | 'Ready'
 
     const playerRef = useRef(null);
 
     // Get current user info for socket events
     const getUserInfo = useCallback(() => {
         try {
+            // Persist guest ID in session storage to survive reloads
+            let guestId = sessionStorage.getItem('syncroom_guest_id');
+            if (!guestId) {
+                guestId = `guest-${Date.now()}`;
+                sessionStorage.setItem('syncroom_guest_id', guestId);
+            }
+
             return {
-                oderId: user?.uid || `guest-${Date.now()}`,
+                oderId: user?.uid || guestId,
                 userName: user?.displayName || (isGuest ? 'Guest' : 'Anonymous'),
                 userAvatar: user?.photoURL || null
             };
@@ -60,43 +70,90 @@ export const RoomProvider = ({ children }) => {
         // Connect to server
         socket.connect();
 
-        socket.on('connect', () => {
+        const handleConnect = () => {
             console.log('[Socket] Connected:', socket.id);
             setIsConnected(true);
             setConnectionError(null);
 
             // AUTO-REJOIN: If we have a room in state, try to rejoin on reconnect
-            setRoom(currentRoom => {
-                if (currentRoom?.code) {
-                    console.log('[Socket] Attempting to REJOIN room:', currentRoom.code);
-                    const { oderId, userName, userAvatar } = getUserInfo();
-                    socket.emit('join_room', {
-                        roomCode: currentRoom.code,
-                        userId: oderId,
-                        userName,
-                        userAvatar
-                    }, (response) => {
-                        if (response.success) console.log('[Socket] Rejoined successfully');
-                        else console.error('[Socket] Failed to rejoin:', response.error);
-                    });
-                }
-                return currentRoom;
-            });
-        });
+            // AUTO-REJOIN: Check session storage for a room code if none is in state
+            const storedRoomCode = sessionStorage.getItem('syncroom_last_room');
+            if (storedRoomCode) {
+                console.log('[Socket] Found stored room code, attempting REJOIN:', storedRoomCode);
+                setLoadingStatus('Rejoining room...');
 
-        socket.on('disconnect', () => {
+                const { oderId, userName, userAvatar } = getUserInfo();
+
+                // FAILSAFE: 5s limit for join response
+                const joinTimeout = setTimeout(() => {
+                    if (!isRoomLoaded) {
+                        console.warn('[Socket] Join timeout - retrying...');
+                        setLoadingStatus('Takes longer than expected... Retrying...');
+                        // Retry logic could go here, or just let user know
+                    }
+                }, 5000);
+
+                socket.emit('join_room', {
+                    roomCode: storedRoomCode,
+                    userId: oderId,
+                    userName,
+                    userAvatar
+                }, (response) => {
+                    clearTimeout(joinTimeout); // Clear failsafe
+
+                    if (response.success) {
+                        console.log('[Socket] Auto-rejoin successful');
+                        setLoadingStatus('Syncing state...');
+
+                        // Manually trigger the state update logic that joinRoom uses
+                        const roomData = response.room;
+                        setRoom({
+                            code: roomData.roomId,
+                            name: roomData.roomName,
+                            type: roomData.roomType,
+                            hostId: roomData.hostId
+                        });
+                        setIsHost(roomData.hostId === oderId);
+                        setParticipants(roomData.users.map(u => ({
+                            ...u,
+                            isHost: u.oderId === roomData.hostId
+                        })));
+                        setVoiceParticipants(roomData.voiceUsers || []);
+                        setChat(roomData.chat || []);
+                        setCurrentMedia(roomData.media);
+                        setPlayback({
+                            isPlaying: roomData.isPlaying,
+                            currentTime: roomData.currentTime,
+                            duration: 0
+                        });
+                        setIsLocked(roomData.isLocked);
+                        setIsRoomLoaded(true);
+                        setLoadingStatus('Ready');
+                    } else {
+                        console.error('[Socket] Failed to auto-rejoin:', response.error);
+                        sessionStorage.removeItem('syncroom_last_room');
+                        setIsRoomLoaded(true); // Stop loading (will show error/home probably)
+                        setLoadingStatus('Error');
+                    }
+                });
+            } else {
+                setIsRoomLoaded(true);
+                setLoadingStatus('Ready');
+            }
+        };
+
+        const handleDisconnect = () => {
             console.log('[Socket] Disconnected');
             setIsConnected(false);
-        });
+        };
 
-        socket.on('connect_error', (error) => {
+        const handleConnectError = (error) => {
             console.error('[Socket] Connection error:', error);
             showError('Failed to connect to server');
             setConnectionError('Failed to connect to server');
-        });
+        };
 
-        // Room events
-        socket.on('user_joined', (data) => {
+        const handleUserJoined = (data) => {
             showInfo(`${data.userName} joined`);
             setParticipants(prev => {
                 if (prev.find(p => p.oderId === data.userId)) return prev;
@@ -108,83 +165,107 @@ export const RoomProvider = ({ children }) => {
                     isHost: false
                 }];
             });
-        });
+        };
 
-        socket.on('user_left', (data) => {
-            // We can't easily get the name here without looking up, but strict ID check is fine
-            // Ideally we'd look up name from participants before filtering
+        const handleUserLeft = (data) => {
             setParticipants(prev => {
                 const user = prev.find(p => p.oderId === data.userId);
                 if (user) showInfo(`${user.name} left`);
                 return prev.filter(p => p.oderId !== data.userId);
             });
-        });
+        };
 
-        socket.on('new_message', (message) => {
-            setChat(prev => [...prev, message]);
-        });
+        const handleNewMessage = (message) => {
+            setChat(prev => {
+                // Prevent duplicate messages
+                if (prev.find(m => m.id === message.id)) return prev;
+                return [...prev, message];
+            });
+        };
 
-        socket.on('playback_sync', (data) => {
+        const handlePlaybackSync = (data) => {
             setCurrentMedia(data.media);
             setPlayback(prev => ({
                 ...prev,
                 isPlaying: data.isPlaying,
                 currentTime: data.currentTime,
                 lastSyncTime: data.serverTime,
-                lastAction: data.action // Used by MediaPlayer to trigger seeks/plays
+                lastAction: data.action
             }));
+        };
 
-            // Note: Drift correction is now handled in MediaPlayer.jsx
-        });
-
-        socket.on('room_locked', (data) => {
+        const handleRoomLocked = (data) => {
             setIsLocked(data.isLocked);
             showInfo(data.isLocked ? "Room Locked" : "Room Unlocked");
-        });
+        };
 
-        socket.on('kicked', () => {
+        const handleKicked = () => {
             setRoom(null);
             setParticipants([]);
             setChat([]);
             navigate('/');
             showError('You have been kicked from the room.');
-        });
+        };
 
-        socket.on('voice_users_update', (users) => {
+        const handleVoiceUsersUpdate = (users) => {
             setVoiceParticipants(users);
-        });
+        };
 
-        socket.on('host_update', (data) => {
+        const handleHostUpdate = (data) => {
             const { newHostId, users } = data;
             setRoom(prev => prev ? { ...prev, hostId: newHostId } : null);
             setParticipants(users);
 
             const newHost = users.find(u => u.oderId === newHostId);
             if (newHost) showSuccess(`Host transferred to ${newHost.name}`);
+        };
 
-            // Re-evaluate local host status
-            // We need to check against local socket/user ID
-            // Since we don't have easy access to local ID inside this callback without refs or dependency
-            // But 'users' list update triggers re-render where 'currentUser' is calculated.
-            // However, isHost state needs explicit update if we want it to be fast.
-            // Better: use useEffect to sync isHost with room.hostId
-        });
+        const handleReactionReceived = (data) => {
+            setActiveReaction(data);
+            // Clear reaction after 3 seconds
+            setTimeout(() => setActiveReaction(null), 3000);
+        };
+
+        const handleMessageReactionUpdate = (data) => {
+            const { messageId, reactions } = data;
+            setChat(prev => prev.map(msg =>
+                msg.id === messageId ? { ...msg, reactions } : msg
+            ));
+        };
+
+        // Register all listeners
+        socket.on('connect', handleConnect);
+        socket.on('disconnect', handleDisconnect);
+        socket.on('connect_error', handleConnectError);
+        socket.on('user_joined', handleUserJoined);
+        socket.on('user_left', handleUserLeft);
+        socket.on('new_message', handleNewMessage);
+        socket.on('playback_sync', handlePlaybackSync);
+        socket.on('room_locked', handleRoomLocked);
+        socket.on('kicked', handleKicked);
+        socket.on('voice_users_update', handleVoiceUsersUpdate);
+        socket.on('host_update', handleHostUpdate);
+        socket.on('reaction_received', handleReactionReceived);
+        socket.on('message_reaction_update', handleMessageReactionUpdate);
 
         return () => {
-            socket.off('connect');
-            socket.off('disconnect');
-            socket.off('connect_error');
-            socket.off('user_joined');
-            socket.off('user_left');
-            socket.off('new_message');
-            socket.off('playback_sync');
-            socket.off('room_locked');
-            socket.off('kicked');
-            socket.off('voice_users_update');
-            socket.off('host_update');
+            // Remove all listeners
+            socket.off('connect', handleConnect);
+            socket.off('disconnect', handleDisconnect);
+            socket.off('connect_error', handleConnectError);
+            socket.off('user_joined', handleUserJoined);
+            socket.off('user_left', handleUserLeft);
+            socket.off('new_message', handleNewMessage);
+            socket.off('playback_sync', handlePlaybackSync);
+            socket.off('room_locked', handleRoomLocked);
+            socket.off('kicked', handleKicked);
+            socket.off('voice_users_update', handleVoiceUsersUpdate);
+            socket.off('host_update', handleHostUpdate);
+            socket.off('reaction_received', handleReactionReceived);
+            socket.off('message_reaction_update', handleMessageReactionUpdate);
             socket.disconnect();
         };
-    }, [navigate]);
+    }, [navigate, showError, showInfo, showSuccess, getUserInfo]);
 
     // ============================================
     // ROOM ACTIONS
@@ -240,6 +321,8 @@ export const RoomProvider = ({ children }) => {
             }, (response) => {
                 if (response.success) {
                     const roomData = response.room;
+
+                    // 1. Basic Room Data
                     setRoom({
                         code: roomData.roomId,
                         name: roomData.roomName,
@@ -247,20 +330,41 @@ export const RoomProvider = ({ children }) => {
                         hostId: roomData.hostId
                     });
                     setIsHost(roomData.hostId === oderId);
+
+                    // 2. Participants & Voice
                     setParticipants(roomData.users.map(u => ({
                         ...u,
                         isHost: u.oderId === roomData.hostId
                     })));
+                    setVoiceParticipants(roomData.voiceUsers || []);
+
+                    // 3. Chat & Media
                     setChat(roomData.chat || []);
                     setCurrentMedia(roomData.media);
+
+                    // 4. Playback State
                     setPlayback({
                         isPlaying: roomData.isPlaying,
-                        currentTime: roomData.currentTime,
+                        currentTime: roomData.currentTime, // Server sends drift-corrected time
                         duration: 0
                     });
                     setIsLocked(roomData.isLocked);
+
+                    // 5. Persistence for Auto-Rejoin
+                    sessionStorage.setItem('syncroom_last_room', roomData.roomId);
+
+                    // 6. Late Joiner Seek Logic
+                    if (roomData.media && roomData.isPlaying && playerRef.current) {
+                        setTimeout(() => {
+                            playerRef.current?.seekTo(roomData.currentTime, 'seconds');
+                            console.log('[Late Join] Seeking to', roomData.currentTime);
+                        }, 100);
+                    }
+
+                    setIsRoomLoaded(true); // <--- CRITICAL FIX
                     resolve(roomData);
                 } else {
+                    setIsRoomLoaded(true);
                     reject(new Error(response.error));
                 }
             });
@@ -294,6 +398,18 @@ export const RoomProvider = ({ children }) => {
                 senderAvatar: userAvatar,
                 content: text
             }
+        });
+    }, [room, getUserInfo]);
+
+    const addMessageReaction = useCallback((messageId, emoji) => {
+        if (!room) return;
+        const { oderId } = getUserInfo();
+
+        socket.emit('add_message_reaction', {
+            roomCode: room.code,
+            messageId,
+            emoji,
+            userId: oderId
         });
     }, [room, getUserInfo]);
 
@@ -460,6 +576,8 @@ export const RoomProvider = ({ children }) => {
         voiceParticipants,
         isLocked,
         isHost,
+        isRoomLoaded,
+        loadingStatus, // <--- Granular loading state
         isConnected,
         connectionError,
         playerRef,
@@ -472,6 +590,7 @@ export const RoomProvider = ({ children }) => {
 
         // Chat
         sendMessage,
+        addMessageReaction,
 
         // Playback (Host Only)
         updatePlayback,
@@ -495,10 +614,28 @@ export const RoomProvider = ({ children }) => {
         // Sync
         requestSync,
 
-        // Reactions (Mock)
-        activeReaction: null,
-        sendReaction: () => { },
-        addMessageReaction: () => { },
+        // Reactions
+        activeReaction,
+        sendReaction: useCallback((emoji) => {
+            if (!room) return;
+            const { oderId, userName } = getUserInfo();
+            socket.emit('send_reaction', {
+                roomCode: room.code,
+                emoji,
+                userId: oderId,
+                userName
+            });
+        }, [room, getUserInfo]),
+        addMessageReaction: useCallback((messageId, emoji) => {
+            if (!room) return;
+            const { oderId } = getUserInfo();
+            socket.emit('add_message_reaction', {
+                roomCode: room.code,
+                messageId,
+                emoji,
+                userId: oderId
+            });
+        }, [room, getUserInfo]),
         muteParticipant: () => { }
     };
 
