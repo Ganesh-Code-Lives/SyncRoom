@@ -1,283 +1,190 @@
-import React, { useState, useRef } from 'react';
-import { Video, Music, Upload, Youtube, Link, Disc, Play, AlertCircle, Monitor } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Video, Youtube, Link, Monitor, ArrowRight } from 'lucide-react';
 import GlassCard from './GlassCard';
 import GlowButton from './GlowButton';
 import Input from './Input';
 import classNames from 'classnames';
-import { classifyUrl } from '../lib/urlClassifier';
+import { classifyUrl, normalizeYoutubeUrl } from '../lib/urlClassifier';
 import './MediaSelector.css';
 
-const MediaSelector = ({ onSelect, roomType = 'video' }) => {
-    const [activeTab, setActiveTab] = useState(roomType);
-    const [sourceType, setSourceType] = useState(roomType === 'video' ? 'youtube' : 'spotify');
+const MediaSelector = ({ onSelect }) => {
     const [url, setUrl] = useState('');
-    const [error, setError] = useState('');
-    const [preview, setPreview] = useState(null);
+    const [previewType, setPreviewType] = useState(null);
     const [showSharedViewModal, setShowSharedViewModal] = useState(false);
-    const fileInputRef = useRef(null);
 
-    const handleTabChange = (tab) => {
-        setActiveTab(tab);
-        setSourceType(tab === 'video' ? 'youtube' : 'spotify');
-        setUrl('');
-        setPreview(null);
-        setError('');
-    };
-
-    const handleFileChange = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        const objectUrl = URL.createObjectURL(file);
-        setPreview({
-            type: activeTab,
-            source: 'file',
-            url: objectUrl,
-            title: file.name,
-            metadata: {
-                size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
-                quality: 'Original Quality'
-            }
-        });
-    };
-
-    const handleUrlBlur = () => {
-        if (!url.trim()) return;
-        setError('');
-
-        if (activeTab === 'video') {
-            if (sourceType === 'youtube') {
-                if (url.includes('youtube.com') || url.includes('youtu.be')) {
-                    setPreview({
-                        type: 'video',
-                        source: 'youtube',
-                        url: url,
-                        title: 'YouTube Video',
-                        metadata: { quality: 'HD', duration: '--:--' }
-                    });
-                } else {
-                    setError('Invalid YouTube URL');
-                    setPreview(null);
-                }
-            } else if (sourceType === 'url') {
-                const classified = classifyUrl(url);
-                const domain = (() => {
-                    try {
-                        return new URL(url).hostname.replace('www.', '');
-                    } catch {
-                        return 'Website';
-                    }
-                })();
-                setPreview({
-                    type: 'video',
-                    source: classified.source,
-                    url: url,
-                    title: classified.type === 'shared_view' ? `${domain} (Shared View)` : `Direct Video`,
-                    metadata: classified.metadata || { quality: 'Unknown', duration: '--:--' },
-                    label: classified.label
-                });
-            }
-        } else {
-            if (sourceType === 'spotify') {
-                if (url.includes('spotify.com')) {
-                    setPreview({
-                        type: 'audio',
-                        source: 'spotify',
-                        url: url,
-                        title: 'Spotify Track (Mock)',
-                        artist: 'Unknown Artist',
-                        metadata: { quality: 'Lossless (Mock)' }
-                    });
-                } else {
-                    setError('Invalid Spotify URL');
-                    setPreview(null);
-                }
-            } else if (sourceType === 'url') {
-                setPreview({
-                    type: 'audio',
-                    source: 'url',
-                    url: url,
-                    title: 'Direct Audio Stream',
-                    metadata: { quality: 'High Bitrate' }
-                });
-            }
+    // Auto-classify URL on change
+    useEffect(() => {
+        if (!url.trim()) {
+            setPreviewType(null);
+            return;
         }
-    };
+        const type = classifyUrl(url);
+        setPreviewType(type);
+    }, [url]);
 
     const handleConfirm = () => {
-        if (!preview) return;
-        if (preview.source === 'shared_view') {
+        if (!previewType) return;
+
+        if (previewType === 'shared') {
             setShowSharedViewModal(true);
         } else {
-            onSelect(preview);
+            let finalUrl = url.trim();
+
+            // Normalize YouTube URLs (Mandatory for browser fix)
+            if (previewType === 'youtube') {
+                finalUrl = normalizeYoutubeUrl(finalUrl);
+                console.log("Normalized YouTube URL:", finalUrl);
+            }
+
+            // Direct playback for YouTube / Files
+            onSelect({
+                url: finalUrl,
+                type: previewType, // 'youtube' or 'direct'
+                source: previewType === 'youtube' ? 'youtube' : 'url',
+                mode: 'sync'
+            });
         }
     };
 
-    const handleSharedViewStart = () => {
+    const handleStartSharedView = () => {
+        onSelect({
+            url: url.trim(),
+            type: 'shared',
+            source: 'shared_view',
+            mode: 'shared_view'
+        });
         setShowSharedViewModal(false);
-        onSelect(preview);
     };
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter' && previewType) {
+            handleConfirm();
+        }
+    };
+
+    // Helper for preview UI
+    const getPreviewInfo = (type) => {
+        switch (type) {
+            case 'youtube':
+                return {
+                    label: 'YouTube Sync',
+                    icon: <Youtube size={24} />,
+                    colorClass: 'preview-sync',
+                    badge: '✅ Native Sync',
+                    badgeClass: 'badge-sync',
+                    desc: 'Perfect synchronization. All members follow your playback.'
+                };
+            case 'direct':
+                return {
+                    label: 'Direct Video Sync',
+                    icon: <Video size={24} />,
+                    colorClass: 'preview-sync',
+                    badge: '✅ Native Sync',
+                    badgeClass: 'badge-sync',
+                    desc: 'Direct file playback. Synced for everyone.'
+                };
+            case 'shared':
+            default:
+                return {
+                    label: 'Shared View',
+                    icon: <Monitor size={24} />,
+                    colorClass: 'preview-shared',
+                    badge: '📡 Tab Stream',
+                    badgeClass: 'badge-shared',
+                    desc: 'You will share your browser tab. Members see your view.'
+                };
+        }
+    };
+
+    const ui = previewType ? getPreviewInfo(previewType) : null;
 
     return (
         <div className="media-selector-container">
             <GlassCard className="media-selector-card">
                 <div className="selector-header">
-                    <h2>Select Media Source</h2>
-                    <p>Choose what you want to watch or listen to</p>
+                    <h2>Select Media</h2>
+                    <p>Paste a YouTube link, video URL, or any website</p>
                 </div>
 
-                {/* Tabs */}
-                <div className="type-tabs">
-                    {roomType === 'video' && (
-                        <button
-                            className={classNames('type-tab', { active: activeTab === 'video' })}
-                            onClick={() => handleTabChange('video')}
-                        >
-                            <Video size={18} />
-                            <span>Video</span>
-                        </button>
-                    )}
-                    {roomType === 'audio' && (
-                        <button
-                            className={classNames('type-tab', { active: activeTab === 'audio' })}
-                            onClick={() => handleTabChange('audio')}
-                        >
-                            <Music size={18} />
-                            <span>Audio</span>
-                        </button>
-                    )}
-                </div>
-
-                {/* Source Options */}
-                <div className="source-options">
-                    {activeTab === 'video' ? (
-                        <>
-                            <button className={classNames('source-btn', { active: sourceType === 'youtube' })} onClick={() => { setSourceType('youtube'); setPreview(null); }}>
-                                <Youtube size={20} />
-                                <span>YouTube</span>
-                            </button>
-                            <button className={classNames('source-btn', { active: sourceType === 'file' })} onClick={() => { setSourceType('file'); setPreview(null); }}>
-                                <Upload size={20} />
-                                <span>Upload</span>
-                            </button>
-                            <button className={classNames('source-btn', { active: sourceType === 'url' })} onClick={() => { setSourceType('url'); setPreview(null); }}>
-                                <Link size={20} />
-                                <span>Direct URL</span>
-                            </button>
-                        </>
-                    ) : (
-                        <>
-                            <button className={classNames('source-btn', { active: sourceType === 'spotify' })} onClick={() => { setSourceType('spotify'); setPreview(null); }}>
-                                <Disc size={20} />
-                                <span>Spotify</span>
-                            </button>
-                            <button className={classNames('source-btn', { active: sourceType === 'file' })} onClick={() => { setSourceType('file'); setPreview(null); }}>
-                                <Upload size={20} />
-                                <span>Upload</span>
-                            </button>
-                            <button className={classNames('source-btn', { active: sourceType === 'url' })} onClick={() => { setSourceType('url'); setPreview(null); }}>
-                                <Link size={20} />
-                                <span>Direct URL</span>
-                            </button>
-                        </>
-                    )}
-                </div>
-
-                {/* Input Area */}
+                {/* Unified Input */}
                 <div className="input-section">
-                    {sourceType === 'file' ? (
-                        <div className="file-upload-area" onClick={() => fileInputRef.current?.click()}>
-                            <input
-                                type="file"
-                                ref={fileInputRef}
-                                hidden
-                                accept={activeTab === 'video' ? "video/*" : "audio/*"}
-                                onChange={handleFileChange}
-                            />
-                            <div className="upload-icon-circle">
-                                <Upload size={24} />
-                            </div>
-                            <p>Click to upload {activeTab} file</p>
-                            <span className="sub-text">Supports MP4, WebM, MP3, WAV</span>
-                        </div>
-                    ) : (
+                    <div className="url-input-wrapper">
                         <Input
-                            placeholder={
-                                sourceType === 'youtube' ? "Paste YouTube URL..." :
-                                    sourceType === 'spotify' ? "Paste Spotify Track link..." :
-                                        sourceType === 'url' ? "Paste URL (video file, YouTube, or streaming site)..." :
-                                            "Paste direct media URL..."
-                            }
+                            placeholder="Paste YouTube, Video File, or Website URL..."
                             value={url}
                             onChange={(e) => setUrl(e.target.value)}
-                            onBlur={handleUrlBlur}
+                            onKeyDown={handleKeyDown}
                             className="media-input"
                             fullWidth
                             autoFocus
+                            icon={<Link size={18} />}
                         />
-                    )}
-                    {error && <div className="error-msg"><AlertCircle size={14} /> {error}</div>}
+                    </div>
                 </div>
 
-                {/* Preview Section */}
-                {preview && (
-                    <div className="media-preview">
+                {/* Smart Preview */}
+                {ui && (
+                    <div className={classNames("media-preview", ui.colorClass)}>
                         <div className="preview-icon">
-                            {preview.source === 'shared_view' ? (
-                                <Monitor size={24} />
-                            ) : activeTab === 'video' ? (
-                                <Video size={24} />
-                            ) : (
-                                <Music size={24} />
-                            )}
+                            {ui.icon}
                         </div>
                         <div className="preview-info">
-                            <h4>{preview.title}</h4>
-                            <div className="preview-meta">
-                                <span className={classNames('quality-badge', {
-                                    'badge-shared-view': preview.source === 'shared_view'
-                                })}>
-                                    {preview.label || preview.metadata.quality}
+                            <div className="preview-header">
+                                <h4>{ui.label}</h4>
+                                <span className={classNames("mode-badge", ui.badgeClass)}>
+                                    {ui.badge}
                                 </span>
-                                {preview.metadata.duration && <span>• {preview.metadata.duration}</span>}
-                                {preview.metadata.size && <span>• {preview.metadata.size}</span>}
                             </div>
+                            <p className="preview-meta">
+                                {ui.desc}
+                            </p>
                         </div>
                     </div>
                 )}
 
                 <div className="action-footer">
                     <GlowButton
-                        size="lg"
                         fullWidth
-                        disabled={!preview}
+                        size="lg"
                         onClick={handleConfirm}
+                        disabled={!previewType}
                     >
-                        <Play size={20} className="mr-2" />
-                        {preview?.source === 'shared_view' ? 'Start Shared View' : 'Start Session'}
+                        {previewType === 'shared' ? 'Configure Session' : 'Start Watching'}
+                        <ArrowRight size={18} />
                     </GlowButton>
                 </div>
-
             </GlassCard>
 
-            {/* Shared View Instruction Modal */}
+            {/* Shared View Modal */}
             {showSharedViewModal && (
                 <div className="shared-view-modal-overlay" onClick={() => setShowSharedViewModal(false)}>
                     <div className="shared-view-modal glass-panel" onClick={e => e.stopPropagation()}>
-                        <h3>Shared View Setup</h3>
-                        <p className="shared-view-instruction">
-                            Select the browser tab playing the video<br />
-                            and <strong>enable &quot;Share tab audio&quot;</strong>.
-                        </p>
-                        <p className="shared-view-instruction-sub">
-                            For best quality, fullscreen the video in the tab before sharing.
-                        </p>
+                        <div className="modal-icon-header">
+                            <Monitor size={48} className="text-secondary" />
+                        </div>
+                        <h3>Start Shared View</h3>
+
+                        <div className="instruction-steps">
+                            <div className="step">
+                                <div className="step-num">1</div>
+                                <p>We'll open a <strong>screen share</strong> dialog.</p>
+                            </div>
+                            <div className="step">
+                                <div className="step-num">2</div>
+                                <p>Select the <strong>Tab</strong> you want to watch.</p>
+                            </div>
+                            <div className="step">
+                                <div className="step-num">3</div>
+                                <p>Ensure <strong>Share audio</strong> is checked.</p>
+                            </div>
+                        </div>
+
                         <div className="shared-view-modal-actions">
-                            <GlowButton variant="secondary" onClick={() => setShowSharedViewModal(false)}>
+                            <GlowButton variant="ghost" onClick={() => setShowSharedViewModal(false)}>
                                 Cancel
                             </GlowButton>
-                            <GlowButton onClick={handleSharedViewStart}>
-                                Start Sharing
+                            <GlowButton onClick={handleStartSharedView}>
+                                Select Tab to Share
                             </GlowButton>
                         </div>
                     </div>

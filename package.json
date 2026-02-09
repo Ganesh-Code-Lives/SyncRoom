@@ -10,15 +10,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "buffer": "^6.0.3",
     "classnames": "^2.5.1",
     "clsx": "^2.1.1",
     "firebase": "^12.9.0",
     "framer-motion": "^12.33.0",
     "lucide-react": "^0.563.0",
+    "process": "^0.11.10",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-player": "^3.4.0",
+    "react-player": "^2.16.0",
     "react-router-dom": "^7.13.0",
+    "simple-peer": "^9.11.1",
     "socket.io-client": "^4.8.3",
     "tailwind-merge": "^3.4.0",
     "uuid": "^13.0.0"

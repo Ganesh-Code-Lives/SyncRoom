@@ -317,20 +317,40 @@ export const RoomProvider = ({ children }) => {
         if (!room || !isHost) return;
         const { oderId } = getUserInfo();
 
-        socket.emit('update_playback', {
-            roomCode: room.code,
-            userId: oderId,
-            action: 'media_change',
-            media: mediaObject,
-            isPlaying: false,
-            currentTime: 0
-        });
+        const emitUpdate = (m) => {
+            socket.emit('update_playback', {
+                roomCode: room.code,
+                userId: oderId,
+                action: 'media_change',
+                media: m,
+                isPlaying: false,
+                currentTime: 0
+            });
+        };
+
+        // HARD RESET PIPELINE
+        // 1. Stop current media (Force unmount of players)
+        socket.emit('stop-sharing', { roomCode: room.code }); // Failsafe cleanup
+        emitUpdate(null);
+
+        // 2. Wait for browser to clear capture/iframe restrictions (Mandatory 50ms+)
+        if (mediaObject) {
+            setTimeout(() => {
+                // ADD UNIQUE ID FOR REMOUNT
+                const mediaWithId = {
+                    ...mediaObject,
+                    id: crypto.randomUUID()
+                };
+                emitUpdate(mediaWithId);
+            }, 50);
+        }
     }, [room, isHost, getUserInfo]);
 
     const clearMedia = useCallback(() => {
         if (!room || !isHost) return;
         const { oderId } = getUserInfo();
 
+        socket.emit('stop-sharing', { roomCode: room.code });
         socket.emit('update_playback', {
             roomCode: room.code,
             userId: oderId,
