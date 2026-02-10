@@ -16,6 +16,49 @@ import Playlist from '../components/Playlist';
 import MediaPlayer from '../components/MediaPlayer';
 import FullscreenChatOverlay from '../components/FullscreenChatOverlay';
 
+// ========================================================
+// MEMOIZED MEDIA SECTION
+// ========================================================
+const MemoizedMediaSection = React.memo(({ currentMedia, isHost, chat, participants, currentUser, sendMessage, addMessageReaction, setMedia, clearMedia, roomType }) => {
+
+    // Stable key for MediaPlayer to avoid unnecessary unmounting
+    // Use ID if available, otherwise URL. Fallback to 'media-player-root' to prevent random re-mounts.
+    // Only date/random if absolutely no identifier exists (rare).
+    const mediaKey = currentMedia?.id || currentMedia?.url || 'media-player-root';
+
+    return (
+        <div className="media-section">
+            <div className="video-container">
+                {!currentMedia ? (
+                    isHost ? (
+                        <MediaSelector onSelect={setMedia} roomType={roomType} />
+                    ) : (
+                        <div className="empty-state-message">
+                            <h2>Waiting for Host...</h2>
+                            <p>The host hasn't selected any media yet.</p>
+                        </div>
+                    )
+                ) : (
+                    <MediaPlayer
+                        key={mediaKey}
+                        media={currentMedia}
+                        isHost={isHost}
+                        onClearMedia={clearMedia}
+                    >
+                        <FullscreenChatOverlay
+                            chat={chat}
+                            currentUser={currentUser}
+                            participants={participants}
+                            onSendMessage={sendMessage}
+                            onSendReaction={addMessageReaction}
+                        />
+                    </MediaPlayer>
+                )}
+            </div>
+        </div>
+    );
+});
+
 const Room = () => {
     const { roomId } = useParams();
     const navigate = useNavigate();
@@ -154,7 +197,7 @@ const Room = () => {
                     <p className="mobile-room-status">
                         <span className="online-dot"></span>
                         {participants.length} Online
-                        {voiceParticipants.length > 0 && ` â€¢ ${voiceParticipants.length} Speaking`}
+                        {voiceParticipants.length > 0 && ` • ${voiceParticipants.length} Speaking`}
                     </p>
                 </div>
                 <div className="mobile-header-actions">
@@ -231,34 +274,18 @@ const Room = () => {
             {/* CONTENT WRAPPER (Shared) */}
             <div className="content-scroll-area">
                 {/* Main Stage (Shared) */}
-                <div className="media-section">
-                    <div className="video-container">
-                        {!currentMedia ? (
-                            isHost ? (
-                                <MediaSelector onSelect={setMedia} roomType={room.type} />
-                            ) : (
-                                <div className="empty-state-message"><h2>Waiting for Host...</h2></div>
-                            )
-                        ) : (
-                            <MediaPlayer
-                                key={currentMedia.id || currentMedia.url || Date.now()}
-                                media={currentMedia}
-                                isHost={isHost}
-                                onClearMedia={clearMedia}
-                            >
-                                <FullscreenChatOverlay
-                                    chat={chat}
-                                    currentUser={currentUser}
-                                    participants={participants}
-                                    onSendMessage={sendMessage}
-                                    onSendReaction={addMessageReaction}
-                                />
-                            </MediaPlayer>
-                        )}
-
-
-                    </div>
-                </div>
+                <MemoizedMediaSection
+                    currentMedia={currentMedia}
+                    isHost={isHost}
+                    chat={chat}
+                    participants={participants}
+                    currentUser={currentUser}
+                    sendMessage={sendMessage}
+                    addMessageReaction={addMessageReaction}
+                    setMedia={setMedia}
+                    clearMedia={clearMedia}
+                    roomType={room?.type}
+                />
 
                 {/* MOBILE CHAT SHEET (Overlay) */}
                 <div className={`mobile-chat-sheet ${showMobileChat ? 'visible' : 'hidden'}`}>
@@ -354,7 +381,7 @@ const Room = () => {
 
                 <div className="voice-panel">
                     {/* Simplified Voice Panel for Desktop (Same as before) */}
-                    <div className="voice-status"><span>VOICE ACTIVE</span> <span className="live-dot">â—</span></div>
+                    <div className="voice-status"><span>VOICE ACTIVE</span> <span className="live-dot"></span></div>
                     <div className="voice-avatars">
                         {voiceParticipants.map(u => (
                             <div key={u.id} className="voice-user">
@@ -375,8 +402,13 @@ const Room = () => {
                 </div>
 
                 <div className="sidebar-content">
-                    {sidebarTab === 'chat' && <ChatPanel chat={chat} currentUser={currentUser} participants={participants} onSendMessage={sendMessage} onSendReaction={addMessageReaction} />}
-                    {sidebarTab === 'members' && (
+                    {/* CHAT TAB */}
+                    <div style={{ display: sidebarTab === 'chat' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+                        <ChatPanel chat={chat} currentUser={currentUser} participants={participants} onSendMessage={sendMessage} onSendReaction={addMessageReaction} />
+                    </div>
+
+                    {/* MEMBERS TAB */}
+                    <div style={{ display: sidebarTab === 'members' ? 'block' : 'none', height: '100%', overflowY: 'auto' }}>
                         <div className="members-panel">
                             {participants.map(p => (
                                 <div key={p.oderId} className="member-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', marginBottom: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
@@ -385,27 +417,54 @@ const Room = () => {
                                         {p.isHost && <Crown size={14} style={{ color: '#f59e0b' }} />}
                                     </div>
                                     {isHost && !p.isHost && (
-                                        <button
-                                            onClick={() => transferHost(p.oderId)}
-                                            style={{
-                                                background: 'rgba(139, 92, 246, 0.2)',
-                                                color: '#a78bfa',
-                                                border: '1px solid #8b5cf6',
-                                                padding: '0.25rem 0.5rem',
-                                                borderRadius: '4px',
-                                                fontSize: '0.75rem',
-                                                cursor: 'pointer'
-                                            }}
-                                            title="Transfer Host"
-                                        >
-                                            Make Host
-                                        </button>
+                                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                            <button
+                                                onClick={() => transferHost(p.oderId)}
+                                                style={{
+                                                    background: 'rgba(139, 92, 246, 0.2)',
+                                                    color: '#a78bfa',
+                                                    border: '1px solid #8b5cf6',
+                                                    padding: '0.25rem 0.5rem',
+                                                    borderRadius: '4px',
+                                                    fontSize: '0.75rem',
+                                                    cursor: 'pointer'
+                                                }}
+                                                title="Transfer Host"
+                                            >
+                                                Make Host
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    if (window.confirm(`Are you sure you want to remove ${p.name} from the room?`)) {
+                                                        kickParticipant(p.oderId, p.name);
+                                                    }
+                                                }}
+                                                style={{
+                                                    background: 'rgba(239, 68, 68, 0.2)',
+                                                    color: '#ef4444',
+                                                    border: '1px solid #ef4444',
+                                                    padding: '0.25rem',
+                                                    borderRadius: '4px',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center'
+                                                }}
+                                                title="Kick Member"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
                             ))}
                         </div>
-                    )}
-                    {sidebarTab === 'queue' && <Playlist playlist={playlist} currentMedia={currentMedia} onPlay={setMedia} onRemove={removeFromQueue} onVoteSkip={voteSkip} isHost={isHost} />}
+                    </div>
+
+                    {/* QUEUE TAB */}
+                    <div style={{ display: sidebarTab === 'queue' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+                        <Playlist playlist={playlist} currentMedia={currentMedia} onPlay={setMedia} onRemove={removeFromQueue} onVoteSkip={voteSkip} isHost={isHost} />
+                    </div>
                 </div>
             </div>
 

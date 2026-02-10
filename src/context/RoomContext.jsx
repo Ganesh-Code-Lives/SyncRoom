@@ -261,6 +261,7 @@ export const RoomProvider = ({ children }) => {
         };
 
         const handleKicked = () => {
+            sessionStorage.removeItem('syncroom_last_room');
             setRoom(null);
             setParticipants([]);
             setChat([]);
@@ -674,7 +675,10 @@ export const RoomProvider = ({ children }) => {
     // ============================================
     // CONTEXT VALUE
     // ============================================
-    const value = {
+    // ============================================
+    // CONTEXT VALUE
+    // ============================================
+    const value = React.useMemo(() => ({
         // State
         room,
         currentUser,
@@ -726,7 +730,31 @@ export const RoomProvider = ({ children }) => {
 
         // Sync
         requestSync
-    };
+    }), [
+        room,
+        currentUser.id, currentUser.name, currentUser.avatar, currentUser.isHost, currentUser.oderId, // Deconstruct currentUser to be safe
+        currentMedia,
+        playback,
+        chat,
+        participants,
+        voiceParticipants,
+        isLocked,
+        isHost,
+        isRoomLoaded,
+        loadingStatus,
+        isConnected,
+        connectionError,
+        // playerRef is a ref, stable
+        playlist,
+        activeReaction,
+        createRoom, joinRoom, leaveRoom,
+        sendMessage, addMessageReaction, sendReaction,
+        updatePlayback, setMedia, clearMedia,
+        toggleLock, kickParticipant, transferHost, muteParticipant,
+        joinVoice, leaveVoice, toggleVoice,
+        addToQueue, removeFromQueue, voteSkip,
+        requestSync
+    ]);
 
     return <RoomContext.Provider value={value}>{children}</RoomContext.Provider>;
 };

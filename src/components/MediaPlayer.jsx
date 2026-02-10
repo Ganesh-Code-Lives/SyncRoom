@@ -1,13 +1,18 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import ReactPlayer from 'react-player';
 import { RefreshCw, Maximize, AlertCircle } from 'lucide-react';
 import { useRoom } from '../context/RoomContext';
 import SharedViewPlayer from './SharedViewPlayer';
 import './MediaPlayer.css';
 
-const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
+// ==========================================
+// PURE MEDIA CONTENT COMPONENT (Memoized)
+// ==========================================
+// Handles the actual video/player logic.
+// Re-renders ONLY when media, playback state, or host status changes.
+// DOES NOT re-render when children (Chat Overlay) updates.
+const MediaContent = React.memo(({ media, playback, isHost, onClearMedia, updatePlayback }) => {
     const playerRef = useRef(null);
-    const { playback, updatePlayback } = useRoom();
     const [showFallback, setShowFallback] = useState(false);
 
     // Reset fallback on new media ID
@@ -15,29 +20,16 @@ const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
         setShowFallback(false);
     }, [media?.id]);
 
-
-
     // ========================================
     // 1. SHARED VIEW (WebRTC)
     // ========================================
     if (media?.type === 'shared') {
         return (
-            <div className="media-player-container shared-view-mode">
-                {isHost && (
-                    <div className="host-overlay-controls">
-                        <button type="button" className="change-media-btn" onClick={onClearMedia} title="Change Media">
-                            <RefreshCw size={16} />
-                            <span>Stop Sharing</span>
-                        </button>
-                    </div>
-                )}
-                <SharedViewPlayer
-                    media={media}
-                    isHost={isHost}
-                    onClearMedia={onClearMedia}
-                />
-                {children}
-            </div>
+            <SharedViewPlayer
+                media={media}
+                isHost={isHost}
+                onClearMedia={onClearMedia}
+            />
         );
     }
 
@@ -83,8 +75,7 @@ const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
         const videoId = videoIdMatch ? videoIdMatch[1] : null;
 
         return (
-            <div className="media-player-container youtube-mode">
-
+            <>
                 {isHost && (
                     <div className="host-overlay-controls">
                         <button type="button" className="change-media-btn" onClick={onClearMedia} title="Change Media">
@@ -97,7 +88,7 @@ const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
                 {/* Primary: ReactPlayer (Forced IFrame Mode) */}
                 {!showFallback && (
                     <ReactPlayer
-                        key={media.id || 'yt-primary'} // 🚨 REQUIRED — forces full remount
+                        key={media.id || 'yt-primary'}
                         ref={playerRef}
                         url={media.url}
                         width="100%"
@@ -150,15 +141,14 @@ const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
                         className="member-fs-btn"
                         onClick={() => {
                             const elem = document.querySelector('.media-player-container');
-                            if (elem.requestFullscreen) elem.requestFullscreen();
+                            if (elem && elem.requestFullscreen) elem.requestFullscreen();
                         }}
                         title="Fullscreen"
                     >
                         <Maximize size={24} />
                     </button>
                 )}
-                {children}
-            </div>
+            </>
         );
     }
 
@@ -166,8 +156,7 @@ const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
     // 4. DIRECT FILE RENDERER
     // ========================================
     return (
-        <div className="media-player-container direct-mode">
-
+        <>
             {isHost && (
                 <div className="host-overlay-controls">
                     <button type="button" className="change-media-btn" onClick={onClearMedia} title="Change Media">
@@ -202,13 +191,37 @@ const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
                     className="member-fs-btn"
                     onClick={() => {
                         const elem = document.querySelector('.media-player-container');
-                        if (elem.requestFullscreen) elem.requestFullscreen();
+                        if (elem && elem.requestFullscreen) elem.requestFullscreen();
                     }}
                     title="Fullscreen"
                 >
                     <Maximize size={24} />
                 </button>
             )}
+        </>
+    );
+});
+
+
+const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
+    const { playback, updatePlayback } = useRoom();
+
+    // Determine container class
+    const containerClass = useMemo(() => {
+        if (media?.type === 'shared') return 'media-player-container shared-view-mode';
+        if (media?.type === 'youtube') return 'media-player-container youtube-mode';
+        return 'media-player-container direct-mode';
+    }, [media?.type]);
+
+    return (
+        <div className={containerClass}>
+            <MediaContent
+                media={media}
+                isHost={isHost}
+                playback={playback}
+                onClearMedia={onClearMedia}
+                updatePlayback={updatePlayback}
+            />
             {children}
         </div>
     );

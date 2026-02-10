@@ -360,7 +360,16 @@ io.on('connection', (socket) => {
         const targetSocket = room.users.find(u => u.oderId === targetUserId);
         if (targetSocket) {
             io.to(targetSocket.id).emit('kicked');
+
+            // Force socket leave
+            const socketInstance = io.sockets.sockets.get(targetSocket.id);
+            if (socketInstance) {
+                socketInstance.leave(roomCode);
+            }
+
             room.users = room.users.filter(u => u.oderId !== targetUserId);
+            room.voiceUsers = room.voiceUsers.filter(u => u.oderId !== targetUserId);
+            io.to(roomCode).emit('voice_users_update', room.voiceUsers);
 
             const kickMessage = {
                 id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
