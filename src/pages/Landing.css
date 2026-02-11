@@ -329,6 +329,57 @@
     }
 }
 
+@media (max-width: 768px) {
+
+    /* Steps Section - Mobile */
+    .steps-container {
+        flex-direction: column;
+        gap: 3rem;
+    }
+
+    .step-divider {
+        transform: rotate(90deg);
+        margin: 1rem 0;
+    }
+
+    .step-item {
+        width: 100%;
+    }
+
+    /* Stack Features Vertically */
+    .features-grid {
+        grid-template-columns: 1fr;
+        gap: 2rem;
+        padding: 0 1rem;
+    }
+
+    /* Disable 3D Tilt on Mobile */
+    .visual-card {
+        transform: none !important;
+        margin-bottom: 2rem;
+        /* Add spacing below visual */
+    }
+
+    .hero-section {
+        padding-top: 4rem;
+        /* Reduce top padding */
+        gap: 2rem;
+    }
+
+    .hero-title {
+        font-size: 2.5rem;
+        /* Smaller title */
+        word-break: break-word;
+        /* Prevent overflow */
+    }
+
+    .landing-page {
+        overflow-x: hidden;
+        /* Strict overflow control */
+        width: 100%;
+    }
+}
+
 /* How It Works Section */
 .how-it-works {
     padding: 6rem 8vw;

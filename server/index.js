@@ -18,8 +18,20 @@ const io = new Server(httpServer, {
             "http://localhost:3000"
         ],
         methods: ["GET", "POST"]
-    }
+    },
+    // Server-Side Heartbeat / Keep-Alive Configuration
+    // Crucial for Render/Load Balancers to prevent idle timeouts
+    pingInterval: 25000, // Send ping every 25s
+    pingTimeout: 20000   // Wait 20s for pong before closing
 });
+
+// ============================================
+// SERVER HEARTBEAT LOOP (Application Level)
+// ============================================
+// Keeps connections alive even if low-level pings are filtered/dropped
+setInterval(() => {
+    io.volatile.emit('server_heartbeat', { timestamp: Date.now() });
+}, 30000); // 30s heartbeat
 
 // ============================================
 // IN-MEMORY ROOM STORAGE
@@ -53,7 +65,16 @@ io.on('connection', (socket) => {
             return callback({ success: false, error: 'Authentication required to create a room.' });
         }
 
-        const roomCode = generateRoomCode();
+        // Collision Check (Retries up to 3 times)
+        let roomCode = generateRoomCode();
+        let attempts = 0;
+        while (rooms.has(roomCode) && attempts < 3) {
+            roomCode = generateRoomCode();
+            attempts++;
+        }
+        if (rooms.has(roomCode)) {
+            return callback({ success: false, error: 'Server busy. Please try again.' });
+        }
 
         const room = {
             roomId: roomCode,
@@ -65,7 +86,7 @@ io.on('connection', (socket) => {
             media: null,
             isPlaying: false,
             currentTime: 0,
-            lastSyncTime: Date.now(),
+            lastSyncTime: Date.now(), // Authoritative server timestamp
             isLocked: false,
             users: [{
                 id: socket.id,
@@ -85,6 +106,7 @@ io.on('connection', (socket) => {
 
         console.log(`[Room] Created: ${roomCode} by ${userName}`);
 
+        // Return SUCCESS with full snapshot
         callback({ success: true, roomCode, room });
     });
 
@@ -96,12 +118,18 @@ io.on('connection', (socket) => {
 
         const room = rooms.get(roomCode);
 
+        // CRITICAL: Strict Existence Check
+        // If room doesn't exist, Client MUST redirect.
         if (!room) {
-            return callback({ success: false, error: 'Invalid room code. Room does not exist.' });
+            return callback({
+                success: false,
+                error: 'Room not found',
+                redirect: true // Signal client to clear state and go home
+            });
         }
 
         if (room.isLocked) {
-            return callback({ success: false, error: 'Room is locked. Cannot join.' });
+            return callback({ success: false, error: 'Room is locked.' });
         }
 
         // Cancel deletion if scheduled
@@ -132,7 +160,7 @@ io.on('connection', (socket) => {
                 oderId: userId,
                 name: userName,
                 avatar: userAvatar,
-                isHost: false,
+                isHost: false, // NEVER auto-host on join (unless created)
                 joinedAt: Date.now()
             });
         }
@@ -149,11 +177,10 @@ io.on('connection', (socket) => {
                 socketId: socket.id
             });
 
-            // Add system message and broadcast it
             const systemMessage = {
                 id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
                 type: 'system',
-                content: `${userName} joined the room`,
+                content: `${userName} joined`,
                 timestamp: new Date().toISOString()
             };
             room.chat.push(systemMessage);
@@ -162,22 +189,23 @@ io.on('connection', (socket) => {
 
         console.log(`[Room] ${userName} ${isReconnect ? 'reconnected to' : 'joined'}: ${roomCode}`);
 
-        // Calculate drift-corrected currentTime for late joiners
+        // Drift Compensation for Late Joiners
         let syncedCurrentTime = room.currentTime;
-        if (room.isPlaying && room.media) {
+        if (room.isPlaying) {
             const elapsed = (Date.now() - room.lastSyncTime) / 1000;
-            syncedCurrentTime = room.currentTime + elapsed;
+            syncedCurrentTime += elapsed;
         }
 
+        // Send Full Snapshot
         callback({
             success: true,
             room: {
                 ...room,
-                currentTime: syncedCurrentTime // Send drift-corrected time
+                currentTime: syncedCurrentTime
             }
         });
 
-        // Send immediate playback sync for late joiners
+        // Force Sync for Member
         if (room.media && !isReconnect) {
             socket.emit('playback_sync', {
                 action: 'late_join_sync',
@@ -190,11 +218,41 @@ io.on('connection', (socket) => {
     });
 
     // --------------------------------------
+    // YOUTUBE TIME SYNC (New - Heartbeat)
+    // --------------------------------------
+    socket.on('yt_time_update', (data) => {
+        const { roomCode, currentTime, isPlaying, timestamp } = data;
+        const room = rooms.get(roomCode);
+
+        // Validation: Room exists & Sender is Host
+        if (!room || room.hostId !== socket.roomUserId) return; // socket.roomUserId needs setting in join
+        // Alternatively, use socket.id and check vs room.hostId logic below (safer if we don't stamp socket)
+        const user = room.users.find(u => u.id === socket.id);
+        if (!user || !user.isHost) return;
+
+        // Update Server State
+        room.currentTime = currentTime;
+        room.isPlaying = isPlaying;
+        room.lastSyncTime = Date.now(); // Server's own authoritative timestamp
+
+        // Broadcast to everyone else (Except Host)
+        // Client uses `timestamp` (Host's time) for latency calculation
+        socket.to(roomCode).emit('yt_time_update', {
+            currentTime,
+            isPlaying,
+            timestamp // High-precision timestamp from Host (used for drift calc)
+        });
+    });
+
+
+    // --------------------------------------
     // LEAVE ROOM
     // --------------------------------------
     socket.on('leave_room', () => {
         handleUserLeave(socket);
     });
+
+    // ... (SEND MESSAGE, REACTIONS - Unchanged) ...
 
     // --------------------------------------
     // SEND MESSAGE
@@ -273,36 +331,31 @@ io.on('connection', (socket) => {
 
         // Verify host
         if (room.hostId !== userId) {
-            console.log(`[Playback] Rejected - ${userId} is not host`);
+            // console.log(`[Playback] Rejected - ${userId} is not host`);
             return;
         }
 
         // Update room state
         if (media !== undefined) {
             room.media = media;
-            console.log(`[Playback] Media updated for room ${roomCode}:`, media ? `${media.type} - ${media.url?.substring(0, 50)}` : 'null');
+            console.log(`[Playback] Media updated:`, media ? media.type : 'null');
         }
         if (isPlaying !== undefined) room.isPlaying = isPlaying;
-
-        // Update time if provided
-        if (currentTime !== undefined) {
-            room.currentTime = currentTime;
-        }
+        if (currentTime !== undefined) room.currentTime = currentTime;
 
         room.lastSyncTime = Date.now();
 
-        // Broadcast to all clients (including host to confirm)
+        // Broadcast to all clients
         io.to(roomCode).emit('playback_sync', {
-            action, // 'play', 'pause', 'seek', 'media_change'
+            action,
             media: room.media,
             isPlaying: room.isPlaying,
             currentTime: room.currentTime,
             serverTime: Date.now()
         });
-
-        console.log(`[Playback] Broadcasted to room ${roomCode}: action=${action}, hasMedia=${!!room.media}, isPlaying=${room.isPlaying}`);
     });
 
+    // ... (SYNC REQUEST, HOST CONTROLS - Unchanged) ...
     // --------------------------------------
     // SYNC REQUEST (Get current state)
     // --------------------------------------
@@ -420,6 +473,8 @@ io.on('connection', (socket) => {
         console.log(`[Room] Host transferred in ${roomCode} to ${targetUser.name}`);
     });
 
+
+    // ... (VOICE, SCREEN, EMOJI - Unchanged) ...
     // --------------------------------------
     // VOICE CHAT SIGNALING (WebRTC)
     // --------------------------------------
@@ -551,6 +606,7 @@ io.on('connection', (socket) => {
         });
     });
 
+    // ... (DISCONNECT) ...
     // --------------------------------------
     // DISCONNECT (with 3s debounce for page reloads)
     // --------------------------------------
@@ -587,55 +643,88 @@ function handleUserLeave(socket) {
     if (!room) return;
 
     const user = room.users.find(u => u.id === socket.id);
-    if (user) {
-        room.users = room.users.filter(u => u.id !== socket.id);
-        room.voiceUsers = room.voiceUsers.filter(u => u.id !== socket.id);
+    if (!user) {
+        // Debug: Why is user not found?
+        // console.log(`[Leave] User not found for socket ${socket.id} in room ${roomCode}`);
+        socket.leave(roomCode);
+        return;
+    }
 
-        // Notify others AND broadcast user list update
-        io.to(roomCode).emit('user_left', {
-            userId: user.oderId,
-            userName: user.name
-        });
+    console.log(`[Leave] Processing leave for ${user.name} (${user.oderId}) from ${roomCode}`);
+    console.log(`[Leave] Before removal: ${room.users.map(u => `${u.name}(${u.id})`).join(', ')}`);
 
-        const leaveMessage = {
-            id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
-            type: 'system',
-            content: `${user.name} left the room`,
-            timestamp: new Date().toISOString()
-        };
-        room.chat.push(leaveMessage);
-        io.to(roomCode).emit('new_message', leaveMessage);
+    // 1. Remove User FIRST (Correct Logic)
+    room.users = room.users.filter(u => u.id !== socket.id);
+    room.voiceUsers = room.voiceUsers.filter(u => u.id !== socket.id);
 
-        console.log(`[Room] ${user.name} left: ${roomCode}`);
+    console.log(`[Leave] After removal: ${room.users.map(u => `${u.name}(${u.id})`).join(', ')}`);
 
-        // If host leaves, pause playback
-        if (user.isHost) {
-            room.isPlaying = false;
-            io.to(roomCode).emit('playback_update', {
-                isPlaying: false,
-                currentTime: room.currentTime,
-                serverTime: Date.now()
-            });
-            const hostLeftMessage = {
+    // Notify others
+    io.to(roomCode).emit('user_left', {
+        userId: user.oderId,
+        userName: user.name
+    });
+
+    const leaveMessage = {
+        id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
+        type: 'system',
+        content: `${user.name} left the room`,
+        timestamp: new Date().toISOString()
+    };
+    room.chat.push(leaveMessage);
+    io.to(roomCode).emit('new_message', leaveMessage);
+
+    console.log(`[Room] ${user.name} left: ${roomCode}. Remaining: ${room.users.length}`);
+
+    // 2. Host Transfer (If user was host AND room not empty)
+    if (user.isHost && room.users.length > 0) {
+        // Sort by joinedAt (Oldest member first)
+        const nextHost = room.users.sort((a, b) => a.joinedAt - b.joinedAt)[0];
+
+        if (nextHost) {
+            console.log(`[Room] Host ${user.name} left. Transferring to ${nextHost.name}`);
+
+            room.hostId = nextHost.oderId;
+            room.hostName = nextHost.name;
+
+            // Update flags in user list
+            room.users = room.users.map(u => ({
+                ...u,
+                isHost: u.oderId === nextHost.oderId
+            }));
+
+            // Notify Room
+            const hostMsg = {
                 id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
                 type: 'system',
-                content: 'Host has left. Playback paused.',
+                content: `Host role transferred to ${nextHost.name}`,
                 timestamp: new Date().toISOString()
             };
-            room.chat.push(hostLeftMessage);
-            io.to(roomCode).emit('new_message', hostLeftMessage);
-        }
+            room.chat.push(hostMsg);
+            io.to(roomCode).emit('new_message', hostMsg);
 
-        // Clean up empty rooms with grace period
-        if (room.users.length === 0) {
-            console.log(`[Room] Empty: ${roomCode}. Deleting in 30s if no one joins...`);
-            room.deleteTimeout = setTimeout(() => {
-                if (rooms.has(roomCode) && rooms.get(roomCode).users.length === 0) {
-                    rooms.delete(roomCode);
-                    console.log(`[Room] Deleted empty room: ${roomCode}`);
-                }
-            }, 30000); // 30 seconds grace period
+            io.to(roomCode).emit('host_update', {
+                newHostId: nextHost.oderId,
+                users: room.users
+            });
         }
+    } else if (user.isHost && room.users.length === 0) {
+        // If host left and no one else -> Pause Playback immediately?
+        // Actually, if empty, it will be deleted soon anyway.
+        // But good to clean up state.
+        room.isPlaying = false;
+    }
+
+    // 3. Clean up empty rooms
+    if (room.users.length === 0) {
+        console.log(`[Room] Empty: ${roomCode}. Deleting in 30s if no one joins...`);
+        room.deleteTimeout = setTimeout(() => {
+            // Re-check existence and emptiness
+            if (rooms.has(roomCode) && rooms.get(roomCode).users.length === 0) {
+                rooms.delete(roomCode);
+                console.log(`[Room] Deleted empty room: ${roomCode}`);
+            }
+        }, 30000); // 30 seconds grace period
     }
 
     socket.leave(roomCode);

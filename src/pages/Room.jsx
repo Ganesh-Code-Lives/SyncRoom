@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactPlayer from 'react-player';
-import { Play, Pause, Volume2, Mic, Phone, Copy, Check, Send, MessageCircle, X, Lock, Unlock, Trash2, MicOff, SkipBack, SkipForward, LogOut, Users, Crown, ArrowLeftRight, ArrowLeft, User, Settings, Smile } from 'lucide-react';
+import { Play, Pause, Volume2, Mic, Phone, Copy, Check, Send, MessageCircle, X, Lock, Unlock, Trash2, MicOff, SkipBack, SkipForward, LogOut, Users, Crown, ArrowLeftRight, ArrowLeft, User, Settings, Smile, WifiOff } from 'lucide-react';
 import { useRoom } from '../context/RoomContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import GlowButton from '../components/GlowButton';
@@ -472,6 +472,14 @@ const Room = () => {
             <div className="mobile-fabs" style={{ display: showMobileChat ? 'none' : 'flex' }}>
 
             </div>
+
+            {/* Reconnecting Overlay */}
+            {!isConnected && (
+                <div className="reconnecting-overlay">
+                    <WifiOff size={18} />
+                    <span>Reconnecting...</span>
+                </div>
+            )}
         </div>
     );
 };

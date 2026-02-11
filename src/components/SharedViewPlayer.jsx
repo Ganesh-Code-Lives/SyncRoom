@@ -4,8 +4,7 @@ import { useRoom } from '../context/RoomContext';
 import { socket } from '../lib/socket';
 import './SharedViewPlayer.css';
 
-const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
-const RTC_CONFIG = { iceServers: ICE_SERVERS };
+import { RTC_CONFIG } from '../lib/turnConfig';
 
 // ==========================================
 // PURE VIEW COMPONENT (Memoized)
@@ -20,6 +19,9 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
     const memberIceQueueRef = useRef([]);
     // Use a ref for participants to avoid re-running effects on every join/leave
     const participantsRef = useRef(activeParticipants);
+
+    // Track retries to prevent infinite loops
+    const retryCountRef = useRef(0);
 
     // Update participants ref without triggering re-render of this view
     useEffect(() => {
@@ -44,7 +46,7 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
         onClearMedia?.();
     }, [roomCode, onClearMedia]);
 
-    const createOfferForMember = useCallback(async (memberSocketId) => {
+    const createOfferForMember = useCallback(async (memberSocketId, isRetry = false) => {
         const stream = streamRef.current;
         if (!stream || !roomCode) return;
 
@@ -52,17 +54,23 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
         let pc = peersRef.current.get(memberSocketId);
         let isNew = false;
 
-        if (!pc) {
-            console.log(`[SharedView] Creating NEW connection for ${memberSocketId}`);
+        if (!pc || isRetry) {
+            if (pc) {
+                console.log(`[SharedView] Closing existing connection for retry: ${memberSocketId}`);
+                pc.close();
+            }
+
+            console.log(`[SharedView] Creating NEW connection for ${memberSocketId} (Retry: ${isRetry})`);
             pc = new RTCPeerConnection(RTC_CONFIG);
             peersRef.current.set(memberSocketId, pc);
             isNew = true;
 
             pc.oniceconnectionstatechange = () => {
+                console.log(`[SharedView] ICE State (${memberSocketId}): ${pc.iceConnectionState}`);
                 if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-                    console.log(`[SharedView] Connection failed/disconnected for ${memberSocketId}`);
-                    pc.close();
-                    peersRef.current.delete(memberSocketId);
+                    console.warn(`[SharedView] Connection unstable for ${memberSocketId}`);
+                    // Host doesn't auto-retry members aggressively to avoid storms.
+                    // Instead, rely on member to re-request or manual restart if widespread.
                 }
             };
 
@@ -252,6 +260,26 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
 
             const pc = new RTCPeerConnection(RTC_CONFIG);
             memberPcRef.current = pc;
+
+            pc.oniceconnectionstatechange = () => {
+                console.log(`[SharedView] Member ICE State: ${pc.iceConnectionState}`);
+                if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+                    if (retryCountRef.current < 1) {
+                        console.log('[SharedView] Connection unstable. Attempting ONE retry...');
+                        retryCountRef.current++;
+                        // Request new offer from host
+                        socket.emit('screen_share_ready', { roomCode });
+                    } else {
+                        console.warn('[SharedView] Connection failed after retry.');
+                        setError("Connection unstable. Host may need to restart sharing.");
+                        setStatus('idle');
+                    }
+                }
+                if (pc.iceConnectionState === 'connected') {
+                    // Reset retry count on successful connection
+                    retryCountRef.current = 0;
+                }
+            };
 
             pc.ontrack = (e) => {
                 const stream = e.streams[0];

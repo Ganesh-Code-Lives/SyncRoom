@@ -76,45 +76,49 @@ export const RoomProvider = ({ children }) => {
             setIsConnected(true);
             setConnectionError(null);
 
-            // AUTO-REJOIN: If we have a room in state, try to rejoin on reconnect
-            // AUTO-REJOIN: Check session storage for a room code if none is in state
-            const storedRoomCode = sessionStorage.getItem('syncroom_last_room');
-            if (storedRoomCode) {
-                console.log('[Socket] Found stored room code, attempting REJOIN:', storedRoomCode);
-                setLoadingStatus('Rejoining room...');
+            // AUTO-REJOIN: Priority 1: Current Room State, Priority 2: Session Storage
+            const codeToJoin = room?.code || sessionStorage.getItem('syncroom_last_room');
+
+            if (codeToJoin) {
+                console.log('[Socket] Attempting REJOIN to:', codeToJoin);
+
+                // If we are already loaded, just show valid syncing state, don't unmount
+                // If fresh load, show specific rejoining message
+                setLoadingStatus(isRoomLoaded ? 'Syncing connection...' : 'Rejoining room...');
 
                 const { oderId, userName, userAvatar } = getUserInfo();
 
-                // FAILSAFE: 8s limit for join response
+                // FAILSAFE: 10s limit for join response (increased for bad networks)
                 let timeoutFired = false;
                 const joinTimeout = setTimeout(() => {
                     timeoutFired = true;
-                    console.warn('[Socket] Join timeout - clearing state and redirecting');
-                    sessionStorage.removeItem('syncroom_last_room');
-                    setIsRoomLoaded(true);
-                    setLoadingStatus('Ready');
-                    setRoom(null);
-                    showError('Failed to rejoin room. Please try again.');
-                    // Note: navigate would need to be imported if we want to redirect here
-                    // For now, just clear the loading state and let Room.jsx handle redirect
-                }, 8000);
+                    if (!isRoomLoaded) { // Only error out if we were stuck on loading screen
+                        console.warn('[Socket] Join timeout - redirecting');
+                        sessionStorage.removeItem('syncroom_last_room');
+                        setIsRoomLoaded(true);
+                        setRoom(null);
+                        showError('Connection timed out. Please try again.');
+                        navigate('/');
+                    } else {
+                        // If we were already loaded, just warn but keep UI (might have recovered quietly)
+                        console.warn('[Socket] Rejoin slow response, but UI is active.');
+                    }
+                }, 10000);
 
                 socket.emit('join_room', {
-                    roomCode: storedRoomCode,
+                    roomCode: codeToJoin,
                     userId: oderId,
                     userName,
                     userAvatar
                 }, (response) => {
-                    // If timeout already fired, ignore this response
                     if (timeoutFired) return;
-
-                    clearTimeout(joinTimeout); // Clear failsafe
+                    clearTimeout(joinTimeout);
 
                     if (response.success) {
-                        console.log('[Socket] Auto-rejoin successful');
-                        setLoadingStatus('Syncing state...');
+                        console.log('[Socket] Rejoin successful - Snapshot Received');
+                        setLoadingStatus('Ready');
 
-                        // Manually trigger the state update logic that joinRoom uses
+                        // SNAPSHOT AUTHORITY: Always overwrite local state with server state
                         const roomData = response.room;
                         setRoom({
                             code: roomData.roomId,
@@ -130,21 +134,33 @@ export const RoomProvider = ({ children }) => {
                         setVoiceParticipants(roomData.voiceUsers || []);
                         setChat(roomData.chat || []);
                         setCurrentMedia(roomData.media);
+
+                        // Only update playback if playing to avoid jitter on paused states
+                        // Or trust server time completely (safest for sync)
                         setPlayback({
                             isPlaying: roomData.isPlaying,
                             currentTime: roomData.currentTime,
                             duration: 0
                         });
+
                         setIsLocked(roomData.isLocked);
                         setIsRoomLoaded(true);
-                        setLoadingStatus('Ready');
+
+                        // Update storage just in case we recovered from in-memory only
+                        sessionStorage.setItem('syncroom_last_room', roomData.roomId);
                     } else {
-                        console.error('[Socket] Failed to auto-rejoin:', response.error);
-                        sessionStorage.removeItem('syncroom_last_room');
-                        setIsRoomLoaded(true); // Stop loading (will show error/home probably)
-                        setLoadingStatus('Ready');
-                        setRoom(null);
-                        showError(response.error || 'Failed to rejoin room');
+                        console.error('[Socket] Failed to rejoin:', response.error);
+                        // Only clear if strictly necessary
+                        if (response.error.includes('not exist') || response.error.includes('locked')) {
+                            sessionStorage.removeItem('syncroom_last_room');
+                            setRoom(null);
+                            setIsRoomLoaded(true);
+                            navigate('/');
+                            showError(response.error);
+                        } else {
+                            // Temporary server error? Keep retrying or let user exit
+                            showError('Rejoin failed: ' + response.error);
+                        }
                     }
                 });
             } else {
@@ -156,12 +172,21 @@ export const RoomProvider = ({ children }) => {
         const handleDisconnect = () => {
             console.log('[Socket] Disconnected');
             setIsConnected(false);
+            // Do NOT clear room state here. Wait for reconnection or explicit leave.
+        };
+
+        const handleServerHeartbeat = (data) => {
+            // Optional: Update last-heard timestamp if implementing strict UI timeout
+            // For now, just confirming receipt is enough to keep socket logic happy
+            // console.log('[Socket] Heartbeat:', data);
         };
 
         const handleConnectError = (error) => {
             console.error('[Socket] Connection error:', error);
-            showError('Failed to connect to server');
-            setConnectionError('Failed to connect to server');
+            // Don't show toast on every retry, it spams
+            if (activeReaction !== 'connect_error') { // Hacky debounce using state if needed, or just log
+                // setConnectionError('Connection unstable...'); // We use isConnected for UI
+            }
         };
 
         const handleUserJoined = (data) => {
@@ -309,6 +334,7 @@ export const RoomProvider = ({ children }) => {
         socket.on('host_update', handleHostUpdate);
         socket.on('reaction_received', handleReactionReceived);
         socket.on('message_reaction_update', handleMessageReactionUpdate);
+        socket.on('server_heartbeat', handleServerHeartbeat);
 
         return () => {
             // Remove all listeners
@@ -325,6 +351,7 @@ export const RoomProvider = ({ children }) => {
             socket.off('host_update', handleHostUpdate);
             socket.off('reaction_received', handleReactionReceived);
             socket.off('message_reaction_update', handleMessageReactionUpdate);
+            socket.off('server_heartbeat', handleServerHeartbeat);
             socket.disconnect();
         };
     }, [navigate, getUserInfo, user, isRoomLoaded]); // Removed showError, showInfo, showSuccess - they're stable from ToastContext
@@ -351,6 +378,7 @@ export const RoomProvider = ({ children }) => {
             }, (response) => {
                 if (response.success) {
                     const roomData = response.room;
+                    // STRICT AUTHORITY: Only set state after success
                     setRoom({
                         code: response.roomCode,
                         name: roomData.roomName,
@@ -423,6 +451,14 @@ export const RoomProvider = ({ children }) => {
                     setIsRoomLoaded(true);
                     resolve(roomData);
                 } else {
+                    // STRICT REDIRECT handling
+                    if (response.redirect) {
+                        console.warn('[Join] Room not found. Redirecting...');
+                        sessionStorage.removeItem('syncroom_last_room');
+                        setRoom(null);
+                        window.location.href = '/'; // Hard redirect to clear state
+                        // navigate('/') can be insufficient if state is stuck
+                    }
                     setIsRoomLoaded(true);
                     reject(new Error(response.error));
                 }
