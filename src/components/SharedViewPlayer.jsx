@@ -28,7 +28,12 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
         participantsRef.current = activeParticipants;
     }, [activeParticipants]);
 
-    const [status, setStatus] = useState(isHost ? 'idle' : 'waiting');
+    const [status, setStatus] = useState(() => {
+        if (isHost) return 'idle';
+        // If we load in and media is already 'shared', we are likely waiting for an offer, not "waiting for host to start"
+        // But 'waiting' is a fine initial state, we just need to handle the UI text better or trigger 'ready' immediately.
+        return 'waiting';
+    });
     const [error, setError] = useState(null);
 
     const stopSharing = useCallback(() => {
@@ -222,18 +227,34 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
     // Actually, startCapture sets status to sharing.
     // If we receive a new participant while sharing, we need to handle it.
 
-    // Host: handle new member joining while sharing
+    // Host: handle new member joining while sharing (Legacy + New Direct Trigger)
     useEffect(() => {
         if (!isHost) return;
 
+        // ORIGINAL: Relies on 'user_joined'
         const onUserJoined = (data) => {
             if (status === 'sharing' && data.socketId && data.socketId !== socket.id) {
+                console.log(`[SharedView] User Joined: ${data.socketId}. Initiating offer.`);
+                createOfferForMember(data.socketId);
+            }
+        };
+
+        // NEW: Handles 'new_peer_for_sharing' (Specific trigger from server for reloads/late joins)
+        const onNewPeer = (data) => {
+            // Only act if we are actually sharing
+            if (status === 'sharing' || streamRef.current) {
+                console.log(`[SharedView] Server requested share for new peer: ${data.socketId}`);
                 createOfferForMember(data.socketId);
             }
         };
 
         socket.on('user_joined', onUserJoined);
-        return () => socket.off('user_joined', onUserJoined);
+        socket.on('new_peer_for_sharing', onNewPeer);
+
+        return () => {
+            socket.off('user_joined', onUserJoined);
+            socket.off('new_peer_for_sharing', onNewPeer);
+        };
     }, [isHost, status, createOfferForMember]);
 
     // Member: receive stream - full WebRTC flow
@@ -493,7 +514,7 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
                 <div className="shared-view-status">Select a BROWSER TAB and enable "Share tab audio" for best quality</div>
             )}
             {status === 'waiting' && !isHost && (
-                <div className="shared-view-status">Waiting for host to start sharing...</div>
+                <div className="shared-view-status">Waiting for stream... (If stuck, reload)</div>
             )}
             {status === 'connecting' && !isHost && (
                 <div className="shared-view-status">Connecting to live stream...</div>

@@ -215,6 +215,16 @@ io.on('connection', (socket) => {
                 serverTime: Date.now()
             });
         }
+
+        // WEBRTC FIX: Trigger Renegotiation if Sharing is Active
+        if (room.isSharing && room.activeSharerId && room.activeSharerId !== socket.id) {
+            console.log(`[WebRTC] Notify Host (${room.activeSharerId}) to share with new peer (${socket.id})`);
+            // We need the Host's SOCKET ID, not their UserId.
+            // room.activeSharerId stores the socket.id from screen_share_start
+            io.to(room.activeSharerId).emit('new_peer_for_sharing', {
+                socketId: socket.id
+            });
+        }
     });
 
     // --------------------------------------
@@ -520,6 +530,10 @@ io.on('connection', (socket) => {
         };
         room.isPlaying = true; // Considered "playing" when sharing
 
+        // WEBRTC FIX: Track Sharing State
+        room.isSharing = true;
+        room.activeSharerId = socket.id; // Store SOCKET ID for direct signaling
+
         const screenShareStartMessage = {
             id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
             type: 'system',
@@ -571,6 +585,10 @@ io.on('connection', (socket) => {
         if (!room) return;
         room.media = null;
         room.isPlaying = false;
+
+        // WEBRTC FIX: Clear Sharing State
+        room.isSharing = false;
+        room.activeSharerId = null;
         const screenShareStopMessage = {
             id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
             type: 'system',
