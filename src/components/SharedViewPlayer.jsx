@@ -70,17 +70,75 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
             peersRef.current.set(memberSocketId, pc);
             isNew = true;
 
-            pc.oniceconnectionstatechange = () => {
+            pc.oniceconnectionstatechange = async () => {
                 console.log(`[SharedView] ICE State (${memberSocketId}): ${pc.iceConnectionState}`);
+                // ICE Restart Logic: Handle both 'failed' and 'disconnected'
                 if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-                    console.warn(`[SharedView] Connection unstable for ${memberSocketId}`);
-                    // Host doesn't auto-retry members aggressively to avoid storms.
-                    // Instead, rely on member to re-request or manual restart if widespread.
+                    // Check if we have already retried for this specific connection to avoid loops
+                    if (!pc.hasRetried) {
+                        console.warn(`[SharedView] Connection unstable (${pc.iceConnectionState}) for ${memberSocketId}. STARTING ICE RESTART...`);
+                        pc.hasRetried = true; // Mark as retried
+
+                        try {
+                            pc.restartIce();
+                            const offer = await pc.createOffer({ iceRestart: true });
+
+                            // Apply bitrate fix to restart offer too
+                            const modifiedSdp = offer.sdp.replace(/(m=video.*\r\n)/, '$1b=AS:4000\r\n');
+                            offer.sdp = modifiedSdp;
+
+                            await pc.setLocalDescription(offer);
+                            socket.emit('screen_share_offer', { to: memberSocketId, offer });
+                        } catch (err) {
+                            console.error(`[SharedView] ICE Restart failed for ${memberSocketId}:`, err);
+                        }
+                    } else {
+                        console.warn(`[SharedView] Connection failed/disconnected again for ${memberSocketId}. No more retries.`);
+                    }
                 }
+
+                if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                    // Log active candidate pair for debugging
+                    pc.getStats().then(stats => {
+                        stats.forEach(report => {
+                            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                                console.log(`[SharedView] Connected to ${memberSocketId}. Selected Pair:`,
+                                    report.remoteCandidateId,
+                                    report.localCandidateId,
+                                    `\nType: ${report.type}`
+                                );
+                            }
+                        });
+                    });
+                }
+            };
+
+            pc.onconnectionstatechange = () => {
+                console.log(`[SharedView] Connection State (${memberSocketId}): ${pc.connectionState}`);
+            };
+
+            pc.onicegatheringstatechange = () => {
+                console.log(`[SharedView] ICE Gathering State (${memberSocketId}): ${pc.iceGatheringState}`);
+            };
+
+            pc.onicecandidateerror = (event) => {
+                console.error(`[SharedView] ❌ ICE CANDIDATE ERROR (${memberSocketId}):`, {
+                    errorCode: event.errorCode,
+                    errorText: event.errorText,
+                    url: event.url,
+                    address: event.address,
+                    port: event.port
+                });
             };
 
             pc.onicecandidate = (e) => {
                 if (e.candidate) {
+                    // Strict Candidate Type Logging
+                    if (e.candidate.candidate.includes('typ relay')) {
+                        console.log(`[SharedView] 🟢 USING TURN RELAY for ${memberSocketId}`);
+                    }
+                    console.log("[SharedView] ICE Candidate Type:", e.candidate.type);
+                    console.log(`[SharedView] ICE Candidate to ${memberSocketId}:`, e.candidate.candidate);
                     socket.emit('screen_share_ice', { to: memberSocketId, candidate: e.candidate });
                 }
             };
@@ -147,15 +205,20 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
             } catch (audioErr) {
                 console.warn("[SharedView] Audio capture failed or cancelled, trying video only...", audioErr);
                 // Fallback to video only if first attempt failed (unlikely for getDisplayMedia, but good safety)
-                stream = await navigator.mediaDevices.getDisplayMedia({
-                    video: {
-                        displaySurface: 'browser',
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 },
-                        frameRate: { ideal: 60 }
-                    },
-                    audio: false
-                });
+                try {
+                    stream = await navigator.mediaDevices.getDisplayMedia({
+                        video: {
+                            displaySurface: 'browser',
+                            width: { ideal: 1920 },
+                            height: { ideal: 1080 },
+                            frameRate: { ideal: 60 }
+                        },
+                        audio: false // Explicitly disable audio in fallback
+                    });
+                } catch (videoErr) {
+                    console.error("[SharedView] Video-only fallback failed:", videoErr);
+                    throw videoErr;
+                }
             }
 
             streamRef.current = stream;
@@ -286,20 +349,39 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
                 console.log(`[SharedView] Member ICE State: ${pc.iceConnectionState}`);
                 if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
                     if (retryCountRef.current < 1) {
-                        console.log('[SharedView] Connection unstable. Attempting ONE retry...');
+                        console.warn(`[SharedView] Connection unstable (${pc.iceConnectionState}). Attempting ONE retry...`);
                         retryCountRef.current++;
                         // Request new offer from host
                         socket.emit('screen_share_ready', { roomCode });
                     } else {
-                        console.warn('[SharedView] Connection failed after retry.');
+                        console.warn('[SharedView] Connection failed/disconnected after retry. Giving up.');
                         setError("Connection unstable. Host may need to restart sharing.");
-                        setStatus('idle');
+                        // setStatus('idle'); // Don't set idle immediately, let user see error or wait for potential recovery?
+                        // Actually, if failed, we should probably stop.
                     }
                 }
-                if (pc.iceConnectionState === 'connected') {
-                    // Reset retry count on successful connection
+                if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                    // Reset retry count on successful connection (optional, or keep strict 1 retry per session?)
+                    // Let's reset it so if it fails LATER, we can retry again.
                     retryCountRef.current = 0;
+
+                    // Log active candidate pair for debugging
+                    pc.getStats().then(stats => {
+                        stats.forEach(report => {
+                            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                                console.log(`[SharedView] Member Connected. Selected Pair:`,
+                                    report.remoteCandidateId,
+                                    report.localCandidateId,
+                                    `\nType: ${report.type}`
+                                );
+                            }
+                        });
+                    });
                 }
+            };
+
+            pc.onconnectionstatechange = () => {
+                console.log(`[SharedView] Member Connection State: ${pc.connectionState}`);
             };
 
             pc.ontrack = (e) => {
@@ -312,8 +394,16 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
 
             pc.onicecandidate = (e) => {
                 if (e.candidate) {
+                    if (e.candidate.candidate.includes('typ relay')) {
+                        console.log(`[SharedView] 🟢 MEMBER USING TURN RELAY`);
+                    }
+                    console.log(`[SharedView] Member ICE Candidate:`, e.candidate.candidate);
                     socket.emit('screen_share_ice', { to: from, candidate: e.candidate });
                 }
+            };
+
+            pc.onicegatheringstatechange = () => {
+                console.log(`[SharedView] Member ICE Gathering State: ${pc.iceGatheringState}`);
             };
 
             try {
