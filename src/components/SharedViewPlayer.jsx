@@ -156,14 +156,25 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, participant
         try {
             const offer = await pc.createOffer();
 
-            // Increase bitrate for better quality (1.5 Mbps video for mesh stability)
+            // Increase bitrate for better quality (4 Mbps video for high quality screen share)
+            // Using 4000 instead of 1500 for high quality
             const modifiedSdp = offer.sdp.replace(
                 /(m=video.*\r\n)/,
-                '$1b=AS:1500\r\n'
+                '$1b=AS:4000\r\n'
             );
             offer.sdp = modifiedSdp;
 
             await pc.setLocalDescription(offer);
+
+            // MODERN API: Set bitrate on the sender after setLocalDescription
+            const sender = pc.getSenders().find(s => s.track?.kind === "video");
+            if (sender && sender.getParameters) {
+                const params = sender.getParameters();
+                if (!params.encodings) params.encodings = [{}];
+                params.encodings[0].maxBitrate = 4000000; // 4 Mbps
+                sender.setParameters(params).catch(e => console.warn("[SharedView] setParameters failed:", e));
+            }
+
             socket.emit('screen_share_offer', { to: memberSocketId, offer });
         } catch (err) {
             console.error(`[SharedView] Failed to create offer for ${memberSocketId}:`, err);
@@ -188,9 +199,9 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, participant
                 stream = await navigator.mediaDevices.getDisplayMedia({
                     video: {
                         displaySurface: 'browser', // Hint for tab capture
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 },
-                        frameRate: { ideal: 60 }
+                        width: { max: 1920, ideal: 1920 },
+                        height: { max: 1080, ideal: 1080 },
+                        frameRate: { max: 30, ideal: 30 } // 30fps is superior for text/code clarity
                     },
                     audio: {
                         echoCancellation: false,
@@ -205,9 +216,9 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, participant
                     stream = await navigator.mediaDevices.getDisplayMedia({
                         video: {
                             displaySurface: 'browser',
-                            width: { ideal: 1920 },
-                            height: { ideal: 1080 },
-                            frameRate: { ideal: 60 }
+                            width: { max: 1920, ideal: 1920 },
+                            height: { max: 1080, ideal: 1080 },
+                            frameRate: { max: 30, ideal: 30 }
                         },
                         audio: false // Explicitly disable audio in fallback
                     });
@@ -218,6 +229,13 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, participant
             }
 
             streamRef.current = stream;
+
+            // TRACK OPTIMIZATION: Set content hint for sharper text
+            const videoTrack = stream.getVideoTracks()[0];
+            if (videoTrack && 'contentHint' in videoTrack) {
+                videoTrack.contentHint = 'detail'; // Optimizes for text/static content
+                console.log("[SharedView] Track contentHint set to 'detail'");
+            }
 
             stream.getVideoTracks()[0]?.addEventListener('ended', () => {
                 stopSharing();
@@ -432,14 +450,24 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, participant
 
                 const answer = await pc.createAnswer();
 
-                // Increase bitrate for better quality on member side (1.5 Mbps)
+                // Increase bitrate for better quality on member side (4 Mbps)
                 const modifiedSdp = answer.sdp.replace(
                     /(m=video.*\r\n)/,
-                    '$1b=AS:1500\r\n'
+                    '$1b=AS:4000\r\n'
                 );
                 answer.sdp = modifiedSdp;
 
                 await pc.setLocalDescription(answer);
+
+                // MODERN API: Also set on member's answer side (though less critical than host)
+                const sender = pc.getSenders().find(s => s.track?.kind === "video");
+                if (sender && sender.getParameters) {
+                    const params = sender.getParameters();
+                    if (!params.encodings) params.encodings = [{}];
+                    params.encodings[0].maxBitrate = 4000000;
+                    sender.setParameters(params).catch(e => { });
+                }
+
                 socket.emit('screen_share_answer', { to: from, answer });
             } catch (err) {
                 console.error("[SharedView] Connection failed:", err);
