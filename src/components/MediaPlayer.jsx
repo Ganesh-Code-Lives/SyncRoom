@@ -148,12 +148,13 @@ const MediaContent = React.memo(({ media, playback, isHost, onClearMedia, update
                 }
             }
         }
-        // If Playing, standard drift check for NON-YouTube (since YT has dedicated socket event)
-        else if (media.type !== 'youtube') {
+        // If Playing, standard drift check for Direct Files
+        else if (media.type === 'direct') {
             const currentLoc = playerRef.current.getCurrentTime();
             if (currentLoc !== null && typeof currentLoc !== 'undefined') {
                 const drift = Math.abs(currentLoc - playback.currentTime);
-                if (drift > 2.0) { // Looser tolerance for generic files
+                if (drift > 2.0) { // Tolerance for direct files
+                    console.log(`[Sync] Direct Video Drift: ${drift.toFixed(3)}s. Seeking to ${playback.currentTime}`);
                     playerRef.current.seekTo(playback.currentTime, 'seconds');
                 }
             }
@@ -347,11 +348,33 @@ const MediaContent = React.memo(({ media, playback, isHost, onClearMedia, update
                 controls={isHost}
                 onPlay={handlePlay}
                 onPause={handlePause}
+                onReady={() => {
+                    console.log("[DirectPlayer] Ready");
+                    if (!isHost && playback.currentTime > 0.5) {
+                        console.log(`[DirectPlayer] Ready Sync: Seeking to ${playback.currentTime}`);
+                        playerRef.current?.seekTo(playback.currentTime, 'seconds');
+                    }
+                }}
+                onProgress={(state) => {
+                    if (isHost && playback.isPlaying) {
+                        // Periodic update for direct files (less aggressive than YT)
+                        const now = Date.now();
+                        if (!playerRef.current.lastDirectSync || now - playerRef.current.lastDirectSync > 2000) {
+                            updatePlayback('sync', {
+                                isPlaying: true,
+                                currentTime: state.playedSeconds
+                            });
+                            playerRef.current.lastDirectSync = now;
+                        }
+                    }
+                }}
                 style={!isHost ? { pointerEvents: 'none' } : {}}
                 config={{
                     file: {
                         attributes: {
-                            controlsList: 'nodownload'
+                            controlsList: 'nodownload',
+                            playsInline: true,
+                            crossOrigin: 'anonymous'
                         }
                     }
                 }}

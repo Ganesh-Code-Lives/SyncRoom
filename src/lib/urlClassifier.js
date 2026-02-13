@@ -12,13 +12,9 @@ export function classifyUrl(url) {
         return 'youtube';
     }
 
-    // TYPE A — Direct video
-    if (
-        cleanUrl.endsWith('.mp4') ||
-        cleanUrl.endsWith('.webm') ||
-        cleanUrl.endsWith('.ogg') ||
-        cleanUrl.endsWith('.m3u8')
-    ) {
+    // TYPE A — Direct video (regex to match extensions even with query params)
+    const fileExtensionRegex = /\.(mp4|webm|ogg|m3u8|mp3|wav)(?:\?.*)?$/i;
+    if (fileExtensionRegex.test(cleanUrl)) {
         return 'direct';
     }
 

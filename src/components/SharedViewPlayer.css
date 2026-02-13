@@ -26,9 +26,7 @@
     background: #000;
 }
 
-.shared-view-video.host-preview {
-    /* Host sees their own capture */
-}
+
 
 .shared-view-stop-btn {
     position: absolute;
@@ -157,4 +155,30 @@
         opacity: 1;
         transform: scale(1);
     }
+}
+
+.error-overlay {
+    pointer-events: auto !important;
+}
+
+.error-text {
+    color: #ef4444;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.change-media-btn {
+    padding: 0.6rem 1.2rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: #fff;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.change-media-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
 }

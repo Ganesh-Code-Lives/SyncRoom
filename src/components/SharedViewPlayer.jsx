@@ -11,22 +11,15 @@ import { RTC_CONFIG } from '../lib/turnConfig';
 // ==========================================
 // This component only re-renders if isHost, roomCode, or media identity changes.
 // It ignores chat updates, participant list changes (unless critically needed), etc.
-const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParticipants, onClearMedia }) => {
+const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, participantsRef, onClearMedia }) => {
     const videoRef = useRef(null);
     const streamRef = useRef(null);
     const peersRef = useRef(new Map());
     const memberPcRef = useRef(null);
     const memberIceQueueRef = useRef([]);
-    // Use a ref for participants to avoid re-running effects on every join/leave
-    const participantsRef = useRef(activeParticipants);
 
     // Track retries to prevent infinite loops
     const retryCountRef = useRef(0);
-
-    // Update participants ref without triggering re-render of this view
-    useEffect(() => {
-        participantsRef.current = activeParticipants;
-    }, [activeParticipants]);
 
     const [status, setStatus] = useState(() => {
         if (isHost) return 'idle';
@@ -84,7 +77,7 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
                             const offer = await pc.createOffer({ iceRestart: true });
 
                             // Apply bitrate fix to restart offer too
-                            const modifiedSdp = offer.sdp.replace(/(m=video.*\r\n)/, '$1b=AS:4000\r\n');
+                            const modifiedSdp = offer.sdp.replace(/(m=video.*\r\n)/, '$1b=AS:1500\r\n');
                             offer.sdp = modifiedSdp;
 
                             await pc.setLocalDescription(offer);
@@ -146,13 +139,16 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
             console.log(`[SharedView] RENEGOTIATING with ${memberSocketId}`);
         }
 
-        // 2. Add Tracks (Only add if not already present)
+        // 2. Add Tracks (Strict Check)
         const senders = pc.getSenders();
         stream.getTracks().forEach(track => {
-            const hasTrack = senders.some(sender => sender.track === track);
+            // STRICT ID CHECK: Only add if track ID is not already being sent
+            const hasTrack = senders.find(s => s.track && s.track.id === track.id);
             if (!hasTrack) {
-                console.log(`[SharedView] Adding track ${track.kind} to ${memberSocketId}`);
+                console.log(`[SharedView] Adding track ${track.kind} (${track.id}) to ${memberSocketId}`);
                 pc.addTrack(track, stream);
+            } else {
+                console.log(`[SharedView] Track ${track.kind} (${track.id}) already exists for ${memberSocketId}`);
             }
         });
 
@@ -160,10 +156,10 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
         try {
             const offer = await pc.createOffer();
 
-            // Increase bitrate for better quality (4 Mbps video)
+            // Increase bitrate for better quality (1.5 Mbps video for mesh stability)
             const modifiedSdp = offer.sdp.replace(
                 /(m=video.*\r\n)/,
-                '$1b=AS:4000\r\n'
+                '$1b=AS:1500\r\n'
             );
             offer.sdp = modifiedSdp;
 
@@ -234,7 +230,7 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
             // CRITICAL: Immediately iterate all participants and start negotiation
             // This ensures members who joined BEFORE share starts get the stream
             // Use the REF here to ensure we have latest participants without re-rendering
-            const currentParticipants = participantsRef.current;
+            const currentParticipants = participantsRef.current || [];
             console.log(`[SharedView] Stream acquired. Starting negotiation with ${currentParticipants.length} participants.`);
 
             currentParticipants.forEach(p => {
@@ -258,7 +254,7 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
             }
             setStatus('idle');
         }
-    }, [isHost, roomCode, hostId, stopSharing, createOfferForMember]); // Removed participants from deps
+    }, [isHost, roomCode, hostId, stopSharing, createOfferForMember, participantsRef]);
 
     // Auto-start / Re-negotiate on mount for members
     useEffect(() => {
@@ -285,10 +281,6 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
         return () => socket.off('screen_share_request_offer', onRequestOffer);
     }, [isHost, roomCode, status, createOfferForMember]);
 
-    // Host: create offers for current participants (backup for members already in room)
-    // We can rely on the startCapture loop mostly, but if status changes to sharing from outside?
-    // Actually, startCapture sets status to sharing.
-    // If we receive a new participant while sharing, we need to handle it.
 
     // Host: handle new member joining while sharing (Legacy + New Direct Trigger)
     useEffect(() => {
@@ -356,16 +348,17 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
                     } else {
                         console.warn('[SharedView] Connection failed/disconnected after retry. Giving up.');
                         setError("Connection unstable. Host may need to restart sharing.");
-                        // setStatus('idle'); // Don't set idle immediately, let user see error or wait for potential recovery?
-                        // Actually, if failed, we should probably stop.
                     }
                 }
                 if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-                    // Reset retry count on successful connection (optional, or keep strict 1 retry per session?)
-                    // Let's reset it so if it fails LATER, we can retry again.
+                    // Reset retry count on successful connection
                     retryCountRef.current = 0;
 
-                    // Log active candidate pair for debugging
+                    // Log active candidate pair and receiver status for debugging
+                    pc.getReceivers().forEach(r => {
+                        console.log(`[SharedView] Receiver track (${r.track?.kind}):`, r.track?.readyState);
+                    });
+
                     pc.getStats().then(stats => {
                         stats.forEach(report => {
                             if (report.type === 'candidate-pair' && report.state === 'succeeded') {
@@ -384,11 +377,38 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
                 console.log(`[SharedView] Member Connection State: ${pc.connectionState}`);
             };
 
-            pc.ontrack = (e) => {
-                const stream = e.streams[0];
-                if (videoRef.current && stream) {
-                    videoRef.current.srcObject = stream;
+            // SAFE PATTERN FOR VIDEO ATTACHMENT
+            // SAFE PATTERN FOR VIDEO ATTACHMENT
+            pc.ontrack = (event) => {
+                console.log("[SharedView] TRACK RECEIVED", event.streams);
+                const remoteStream = event.streams[0];
+
+                if (!remoteStream) {
+                    console.warn("[SharedView] ontrack fired but no stream found!");
+                    return;
+                }
+
+                const video = videoRef.current;
+                if (video) {
+                    video.srcObject = remoteStream;
                     setStatus('playing');
+
+                    video.onloadedmetadata = () => {
+                        video.play().catch((e) => {
+                            console.warn("[SharedView] Autoplay blocked, trying muted...", e);
+                            video.muted = true;
+                            video.play().catch((e2) => {
+                                console.error("[SharedView] Play failed even when muted:", e2);
+                            });
+                        });
+                    };
+
+                    // Receiver track debug
+                    pc.getReceivers().forEach(r => {
+                        console.log("[SharedView] Receiver status:", r.track?.kind, r.track?.readyState);
+                    });
+                } else {
+                    console.error("[SharedView] Video element not found when track arrived!");
                 }
             };
 
@@ -412,10 +432,10 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
 
                 const answer = await pc.createAnswer();
 
-                // Increase bitrate for better quality on member side
+                // Increase bitrate for better quality on member side (1.5 Mbps)
                 const modifiedSdp = answer.sdp.replace(
                     /(m=video.*\r\n)/,
-                    '$1b=AS:4000\r\n'
+                    '$1b=AS:1500\r\n'
                 );
                 answer.sdp = modifiedSdp;
 
@@ -559,14 +579,7 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
         };
     }, []);
 
-    if (error) {
-        return (
-            <div className="shared-view-container shared-view-error">
-                <p>{error}</p>
-                <button type="button" className="change-media-btn" onClick={onClearMedia}>Back to Media Selection</button>
-            </div>
-        );
-    }
+
 
     return (
         <div className="shared-view-container">
@@ -594,11 +607,23 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
                     ref={videoRef}
                     autoPlay
                     playsInline
+                    controls={false}
                     muted={isHost}
                     className="shared-view-video"
                     style={{ objectFit: 'contain', backgroundColor: '#000' }}
                 />
             </div>
+
+            {error && (
+                <div className="host-controls-overlay error-overlay">
+                    <div className="start-share-prompt">
+                        <p className="error-text">{error}</p>
+                        <button type="button" className="change-media-btn" onClick={onClearMedia}>
+                            Back to Media Selection
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {status === 'capturing' && (
                 <div className="shared-view-status">Select a BROWSER TAB and enable "Share tab audio" for best quality</div>
@@ -623,23 +648,23 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, activeParti
 export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
     const { room, participants } = useRoom();
 
-    // We pass participants to the View, but remember:
-    // The View uses a ref for participants to avoid re-rendering loops for WebRTC logic.
-    // However, if participants change (join/leave), the View *will* re-render because props changed.
-    // This is correct behavior because we want to update the ref.
-    // 
-    // BUT! If `chat` changes, `SharedViewPlayer` re-renders.
-    // `participants` ref in `RoomContext` might be stable or new array?
-    // In `RoomContext`, `setParticipants` creates new array.
-    // If only `chat` changes, `participants` array reference should be SAME as previous render.
-    // So `SharedViewPlayerView` will NOT re-render.
+    // STABILITY FIX: Use a Ref to hold participants
+    // This allows us to access the LATEST participants list in callbacks (like startCapture)
+    // WITHOUT forcing the pure View component to re-render when a user joins/leaves.
+    // If the View re-renders, React *might* touch the video element (though memo helps).
+    // This is extra safety to guarantee the video tag is NEVER touched by participant updates.
+    const participantsRef = useRef(participants);
+
+    useEffect(() => {
+        participantsRef.current = participants;
+    }, [participants]);
 
     return (
         <SharedViewPlayerView
             isHost={isHost}
             roomCode={room?.code}
             hostId={room?.hostId}
-            activeParticipants={participants}
+            participantsRef={participantsRef}
             onClearMedia={onClearMedia}
         />
     );
