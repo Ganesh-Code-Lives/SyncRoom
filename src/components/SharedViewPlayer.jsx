@@ -188,23 +188,46 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
         if (isHost || !roomCode) return;
 
         const initSfu = async () => {
+            let connectionTimeout;
             try {
                 console.log("[SFU] Member joining room: " + roomCode);
                 setStatus('connecting');
 
+                // Set a 15s timeout for initial connection
+                connectionTimeout = setTimeout(() => {
+                    if (statusRef.current === 'connecting') {
+                        console.error("[SFU] Connection timeout - no producers or init failed");
+                        setError("Connection timed out. heavy traffic or firewall issue.");
+                        setStatus('idle');
+                    }
+                }, 15000);
+
                 await sfuClient.init(roomCode);
                 console.log("[SFU] sfuClient init finished, waiting for producers...");
 
+                // Clear timeout if we successfully initialized (waiting for producers is a separate state)
+                // actually, we stay in 'connecting' until producers arrive? 
+                // No, let's keep the timeout running until we actually get a producer OR 
+                // we switch to 'waiting' state.
+
+                // If we are still connecting after init, we are just waiting for the first producer
+                // The 4s timeout below is for "switching to waiting if empty", 
+                // but the 15s timeout is a "hard fail" if nothing happens at all.
+
                 setTimeout(() => {
                     if (statusRef.current === 'connecting' && activeConsumersRef.current.size === 0) {
-                        console.log("[SFU] No producers arrived, setting to waiting");
+                        console.log("[SFU] No producers arrived yet, setting to waiting");
                         setStatus('waiting');
+                        clearTimeout(connectionTimeout); // We are safe, just waiting
                     }
                 }, 4000);
             } catch (err) {
                 console.error("[SFU] Member Init failed:", err);
-                setError("Connection timeout. Please reload. " + (err.message || err));
+                setError("Connection connection failed. " + (err.message || err));
                 setStatus('idle');
+            } finally {
+                // If we reached here without erroring out, we might still be 'connecting'
+                // The timeout inside the try block handles the hang.
             }
         };
 

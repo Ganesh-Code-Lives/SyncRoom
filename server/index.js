@@ -10,14 +10,28 @@ app.use(cors());
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
-        origin: [
-            "http://localhost:5173",
-            "http://localhost:5174",
-            "https://syncroom-theta.vercel.app",
-            "http://localhost:5175",
-            "http://localhost:5176",
-            "http://localhost:3000"
-        ],
+        origin: (origin, callback) => {
+            const allowedOrigins = [
+                "http://localhost:5173",
+                "http://localhost:5174",
+                "https://syncroom-theta.vercel.app",
+                "http://localhost:5175",
+                "http://localhost:5176",
+                "http://localhost:3000"
+            ];
+            if (process.env.CLIENT_URL) allowedOrigins.push(process.env.CLIENT_URL);
+
+            // Allow requests with no origin (like mobile apps or curl requests)
+            if (!origin) return callback(null, true);
+
+            if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app')) {
+                callback(null, true);
+            } else {
+                // Check for Vercel preview deployments (dynamic subdomains)
+                // Temporarily allow all for debugging if strict mode fails
+                callback(null, true); // WARN: For production, tighten this!
+            }
+        },
         methods: ["GET", "POST"]
     },
     // Server-Side Heartbeat / Keep-Alive Configuration

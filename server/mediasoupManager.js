@@ -1,4 +1,47 @@
 import mediasoup from 'mediasoup';
+import os from 'os';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import http from 'http';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Helper to manually load .env (since dotenv might not be installed)
+const loadEnv = () => {
+    try {
+        const envPath = path.resolve(__dirname, '../.env');
+        if (fs.existsSync(envPath)) {
+            const envConfig = fs.readFileSync(envPath, 'utf8');
+            envConfig.split('\n').forEach(line => {
+                const [key, value] = line.split('=');
+                if (key && value) {
+                    process.env[key.trim()] = value.trim();
+                }
+            });
+            console.log('[Env] Loaded .env file manually');
+        }
+    } catch (e) {
+        console.warn('[Env] Failed to load .env manually:', e);
+    }
+};
+loadEnv();
+
+// Helper to get Local LAN IP
+const getLocalIp = () => {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+            // Skip internal (i.e. 127.0.0.1) and non-ipv4 addresses
+            if ('IPv4' !== iface.family || iface.internal) {
+                continue;
+            }
+            return iface.address;
+        }
+    }
+    return '127.0.0.1';
+};
 
 const mediaCodecs = [
     {
@@ -25,9 +68,15 @@ class MediasoupManager {
         this.workers = [];
         this.nextWorkerIdx = 0;
         this.rooms = new Map(); // roomId => { router, peers: Map(socketId => { transports, producers, consumers }) }
+        this.announcedIp = '127.0.0.1'; // Default
     }
 
     async init() {
+        // 1. Determine Announced IP
+        this.announcedIp = await this.determineAnnouncedIp();
+        console.log(`[Mediasoup] Final Announced IP: ${this.announcedIp}`);
+
+        // 2. Create Workers
         console.log('[Mediasoup] Creating 2 workers...');
         const numWorkers = 2;
         for (let i = 0; i < numWorkers; i++) {
@@ -46,6 +95,45 @@ class MediasoupManager {
             console.log(`[Mediasoup] Worker ${i + 1} created (pid: ${worker.pid})`);
         }
         console.log(`[Mediasoup] SUCCESS: Initialized ${this.workers.length} workers`);
+    }
+
+    async determineAnnouncedIp() {
+        // 1. Check Environment Variable (Render/Manual)
+        if (process.env.ANNOUNCED_IP) {
+            console.log(`[Mediasoup] Using ANNOUNCED_IP from env: ${process.env.ANNOUNCED_IP}`);
+            return process.env.ANNOUNCED_IP;
+        }
+
+        // 2. Production Mode: Auto-detect Public IP
+        if (process.env.NODE_ENV === 'production') {
+            try {
+                console.log('[Mediasoup] Production mode detected. Auto-detecting Public IP...');
+                const ip = await new Promise((resolve, reject) => {
+                    const req = http.get('http://api.ipify.org', (res) => {
+                        let data = '';
+                        res.on('data', chunk => data += chunk);
+                        res.on('end', () => resolve(data.trim()));
+                    });
+                    req.on('error', reject);
+                    req.setTimeout(3000, () => {
+                        req.destroy();
+                        reject(new Error('Timeout'));
+                    });
+                });
+                console.log(`[Mediasoup] Auto-detected Public IP: ${ip}`);
+                return ip;
+            } catch (err) {
+                console.warn(`[Mediasoup] Public IP auto-detection failed: ${err.message}`);
+                console.warn('[Mediasoup] Falling back to Local IP even in production!');
+            }
+        } else {
+            console.log('[Mediasoup] Development mode detected (NODE_ENV != production). Skipping Public IP auto-detect.');
+        }
+
+        // 3. Fallback / Development: Local LAN IP
+        const localIp = getLocalIp();
+        console.log(`[Mediasoup] Using Local LAN IP: ${localIp}`);
+        return localIp;
     }
 
     getWorker() {
@@ -76,7 +164,7 @@ class MediasoupManager {
             listenIps: [
                 {
                     ip: '0.0.0.0',
-                    announcedIp: '127.0.0.1', // Use actual IP for production
+                    announcedIp: this.announcedIp, // Use resolved IP (Env > Public > Local)
                 }
             ],
             enableUdp: true,
@@ -94,6 +182,14 @@ class MediasoupManager {
                 iceParameters: transport.iceParameters,
                 iceCandidates: transport.iceCandidates,
                 dtlsParameters: transport.dtlsParameters,
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    ...(process.env.VITE_TURN_USER ? [{
+                        urls: 'turn:global.turn.metered.ca:80',
+                        username: process.env.VITE_TURN_USER,
+                        credential: process.env.VITE_TURN_PASS
+                    }] : [])
+                ]
             }
         };
     }
