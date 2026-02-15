@@ -147,6 +147,8 @@ class MediasoupManager {
             return this.rooms.get(roomId);
         }
 
+        console.log(`[Mediasoup] 🟢 Creating new room: ${roomId}`); // DEBUG LOG
+
         const worker = this.getWorker();
         const router = await worker.createRouter({ mediaCodecs });
         const room = {
@@ -160,6 +162,7 @@ class MediasoupManager {
     }
 
     async createWebRtcTransport(router) {
+        console.log(`[Mediasoup] 🛠 Creating WebRTC Transport (Announced IP: ${this.announcedIp})`); // DEBUG LOG
         const transport = await router.createWebRtcTransport({
             listenIps: [
                 {
@@ -167,9 +170,10 @@ class MediasoupManager {
                     announcedIp: this.announcedIp, // Use resolved IP (Env > Public > Local)
                 }
             ],
-            enableUdp: true,
+            enableUdp: true, // Keep UDP enabled just in case
             enableTcp: true,
-            preferUdp: true,
+            preferUdp: false, // Render/Railway often block UDP
+            preferTcp: true,  // Force TCP fallback for restricted networks
             initialAvailableOutgoingBitrate: 1500000, // 1.5 Mbps
             minimumAvailableOutgoingBitrate: 800000,  // 800 kbps
         });

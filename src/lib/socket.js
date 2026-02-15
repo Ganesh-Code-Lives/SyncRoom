@@ -13,4 +13,20 @@ export const socket = io(SOCKET_URL, {
     transports: ['websocket', 'polling'] // Try WebSocket first, fallback to polling
 });
 
+// --- DEBUG LOGS (Added for deployment diagnosis) ---
+console.log("[Socket] Initializing with URL:", SOCKET_URL);
+
+socket.on("connect", () => {
+    console.log("✅ [Socket] Connected to Backend:", socket.id);
+});
+
+socket.on("connect_error", (err) => {
+    console.error("❌ [Socket] Connection Error:", err.message);
+});
+
+socket.on("disconnect", (reason) => {
+    console.log("⚠️ [Socket] Disconnected:", reason);
+});
+// ---------------------------------------------------
+
 export default socket;

@@ -19,6 +19,10 @@ const io = new Server(httpServer, {
                 "http://localhost:5176",
                 "http://localhost:3000"
             ];
+            // Allow all Vercel deployments (preview & production) for ease of testing
+            if (origin && origin.endsWith('.vercel.app')) {
+                return callback(null, true);
+            }
             if (process.env.CLIENT_URL) allowedOrigins.push(process.env.CLIENT_URL);
 
             // Allow requests with no origin (like mobile apps or curl requests)
