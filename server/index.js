@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import { mediasoupManager } from './mediasoupManager.js';
 
 const app = express();
 app.use(cors());
@@ -55,6 +56,9 @@ const generateRoomCode = () => {
 io.on('connection', (socket) => {
     console.log(`[Socket] User connected: ${socket.id}`);
 
+    // Attach Mediasoup handlers
+    mediasoupManager.handleSocket(socket, io);
+
     // --------------------------------------
     // CREATE ROOM
     // --------------------------------------
@@ -103,6 +107,8 @@ io.on('connection', (socket) => {
         rooms.set(roomCode, room);
         socket.join(roomCode);
         socket.roomCode = roomCode;
+        socket.userId = userId;
+        socket.userName = userName;
 
         console.log(`[Room] Created: ${roomCode} by ${userName}`);
 
@@ -167,6 +173,8 @@ io.on('connection', (socket) => {
 
         socket.join(roomCode);
         socket.roomCode = roomCode;
+        socket.userId = userId;
+        socket.userName = userName;
 
         // Notify others only if this is a new join (not reconnect)
         if (!isReconnect) {
@@ -280,6 +288,8 @@ io.on('connection', (socket) => {
             content: message.content,
             timestamp: new Date().toISOString(),
             type: 'user',
+            replyTo: message.replyTo || null, // Store reply context
+            isEdited: false,
             reactions: {} // Initialize empty reactions object
         };
 
@@ -287,6 +297,66 @@ io.on('connection', (socket) => {
 
         // Broadcast to all in room
         io.to(roomCode).emit('new_message', newMessage);
+    });
+
+    // --------------------------------------
+    // EDIT MESSAGE
+    // --------------------------------------
+    socket.on('edit_message', (data) => {
+        const { roomCode, messageId, newContent, userId } = data;
+        const room = rooms.get(roomCode);
+        if (!room) return;
+
+        const message = room.chat.find(m => m.id === messageId);
+        if (!message) return;
+
+        // Verify ownership (or host?)
+        // Assuming strict ownership for now, or host override
+        const user = room.users.find(u => u.oderId === userId);
+        const isHost = user?.isHost;
+
+        if (message.senderId !== userId && !isHost) {
+            return; // Unauthorized
+        }
+
+        // Update content
+        message.content = newContent;
+        message.isEdited = true;
+
+        io.to(roomCode).emit('message_updated', {
+            messageId,
+            newContent,
+            isEdited: true
+        });
+    });
+
+    // --------------------------------------
+    // DELETE MESSAGE
+    // --------------------------------------
+    socket.on('delete_message', (data) => {
+        const { roomCode, messageId, userId } = data;
+        const room = rooms.get(roomCode);
+        if (!room) return;
+
+        const messageIndex = room.chat.findIndex(m => m.id === messageId);
+        if (messageIndex === -1) return;
+
+        const message = room.chat[messageIndex];
+
+        // Verify ownership (or host)
+        const user = room.users.find(u => u.oderId === userId);
+        const isHost = user?.isHost;
+
+        if (message.senderId !== userId && !isHost) {
+            return; // Unauthorized
+        }
+
+        // Remove from chat
+        room.chat.splice(messageIndex, 1);
+
+        io.to(roomCode).emit('message_deleted', {
+            messageId
+        });
     });
 
     // --------------------------------------
@@ -488,29 +558,84 @@ io.on('connection', (socket) => {
     // --------------------------------------
     // VOICE CHAT SIGNALING (WebRTC)
     // --------------------------------------
-    socket.on('join_voice', (data) => {
-        const { roomCode, userId, userName } = data;
+    // --------------------------------------
+    // SFU VOICE CHANNEL
+    // --------------------------------------
+    socket.on('join-voice', (data, callback) => {
+        const { roomCode, userId } = data;
         const room = rooms.get(roomCode);
-        if (!room) return;
+        if (!room) return callback?.({ error: 'Room not found' });
+
+        const user = room.users.find(u => u.oderId === userId);
+        if (!user) return callback?.({ error: 'User not found in room' });
 
         if (!room.voiceUsers.find(u => u.oderId === userId)) {
-            room.voiceUsers.push({ id: socket.id, oderId: userId, name: userName });
+            room.voiceUsers.push({
+                id: socket.id,
+                oderId: userId,
+                name: user.name,
+                avatar: user.avatar,
+                isSpeaking: false,
+                isMuted: false,
+                isDeafened: false,
+                joinedAt: Date.now()
+            });
         }
+
+        // Notify others
         io.to(roomCode).emit('voice_users_update', room.voiceUsers);
+
+        console.log(`[Voice] ${user.name} joined voice in ${roomCode}`);
+        callback?.({ success: true });
     });
 
-    socket.on('leave_voice', (data) => {
+    socket.on('leave-voice', (data) => {
         const { roomCode, userId } = data;
         const room = rooms.get(roomCode);
         if (!room) return;
 
         room.voiceUsers = room.voiceUsers.filter(u => u.oderId !== userId);
         io.to(roomCode).emit('voice_users_update', room.voiceUsers);
+        console.log(`[Voice] User ${userId} left voice in ${roomCode}`);
     });
 
-    socket.on('voice_signal', (data) => {
-        const { roomCode, targetSocketId, signal } = data;
-        io.to(targetSocketId).emit('voice_signal', { from: socket.id, signal });
+    socket.on('speaking-status', (data) => {
+        const { roomCode, userId, isSpeaking } = data;
+        const room = rooms.get(roomCode);
+        if (!room) return;
+
+        const voiceUser = room.voiceUsers.find(u => u.oderId === userId);
+        if (voiceUser) {
+            voiceUser.isSpeaking = isSpeaking;
+            // Broadcast to others to show indicator
+            socket.to(roomCode).emit('user-speaking-update', { userId, isSpeaking });
+        }
+    });
+
+    socket.on('voice_mute_update', (data) => {
+        const { roomCode, userId, isMuted } = data;
+        const room = rooms.get(roomCode);
+        if (!room) return;
+
+        const voiceUser = room.voiceUsers.find(u => u.oderId === userId);
+        if (voiceUser) {
+            voiceUser.isMuted = isMuted;
+            socket.to(roomCode).emit('voice_user_mute_changed', { userId, isMuted });
+            console.log(`[Voice] Mute changed: ${voiceUser.name} -> ${isMuted}`);
+        }
+    });
+
+    socket.on('voice_deafen_update', (data) => {
+        const { roomCode, userId, isDeafened } = data;
+        const room = rooms.get(roomCode);
+        if (!room) return;
+
+        const voiceUser = room.voiceUsers.find(u => u.oderId === userId);
+        if (voiceUser) {
+            voiceUser.isDeafened = isDeafened;
+            socket.to(roomCode).emit('voice_user_deafen_changed', { userId, isDeafened });
+            console.log(`[Voice] Deafen changed: ${voiceUser.name} -> ${isDeafened}`);
+        }
     });
 
     // --------------------------------------
@@ -675,6 +800,9 @@ function handleUserLeave(socket) {
     room.users = room.users.filter(u => u.id !== socket.id);
     room.voiceUsers = room.voiceUsers.filter(u => u.id !== socket.id);
 
+    // Notify others about voice state
+    io.to(roomCode).emit('voice_users_update', room.voiceUsers);
+
     console.log(`[Leave] After removal: ${room.users.map(u => `${u.name}(${u.id})`).join(', ')}`);
 
     // Notify others
@@ -682,7 +810,6 @@ function handleUserLeave(socket) {
         userId: user.oderId,
         userName: user.name
     });
-
     const leaveMessage = {
         id: `${Date.now()}-system-${Math.random().toString(36).substr(2, 9)}`,
         type: 'system',
@@ -740,9 +867,27 @@ function handleUserLeave(socket) {
             // Re-check existence and emptiness
             if (rooms.has(roomCode) && rooms.get(roomCode).users.length === 0) {
                 rooms.delete(roomCode);
+                // Also delete Mediasoup room if it exists
+                if (mediasoupManager.rooms.has(roomCode)) {
+                    const msRoom = mediasoupManager.rooms.get(roomCode);
+                    msRoom.router.close();
+                    mediasoupManager.rooms.delete(roomCode);
+                    console.log(`[Mediasoup] Deleted empty room router: ${roomCode}`);
+                }
                 console.log(`[Room] Deleted empty room: ${roomCode}`);
             }
         }, 30000); // 30 seconds grace period
+    }
+
+    // Clean up Mediasoup peer state for this specific user
+    const msRoom = mediasoupManager.rooms.get(roomCode);
+    if (msRoom && msRoom.peers.has(socket.id)) {
+        const peer = msRoom.peers.get(socket.id);
+        peer.transports.forEach(t => t.close());
+        peer.producers.forEach(p => p.close());
+        peer.consumers.forEach(c => c.close());
+        msRoom.peers.delete(socket.id);
+        console.log(`[Mediasoup] Cleaned up peer state for ${socket.id}`);
     }
 
     socket.leave(roomCode);
@@ -759,6 +904,18 @@ app.get('/', (req, res) => {
 // START SERVER
 // ============================================
 const PORT = process.env.PORT || 3001;
-httpServer.listen(PORT, () => {
-    console.log(`🚀 SyncRoom Server running on http://localhost:${PORT}`);
-});
+
+async function startServer() {
+    console.log('[Server] Initializing Mediasoup...');
+    try {
+        await mediasoupManager.init();
+        httpServer.listen(PORT, () => {
+            console.log(`🚀 SyncRoom Server running on http://localhost:${PORT}`);
+        });
+    } catch (err) {
+        console.error('[Server] Failed to initialize Mediasoup:', err);
+        process.exit(1);
+    }
+}
+
+startServer();

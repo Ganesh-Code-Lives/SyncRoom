@@ -342,123 +342,7 @@
     color: #ef4444;
 }
 
-/* 2️⃣ VoiceChannelSection - FIXED HEIGHT */
-.voice-panel {
-    padding: 1rem;
-    background: rgba(16, 185, 129, 0.05);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    flex-shrink: 0;
-}
-
-.voice-status {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.85rem;
-    color: #10b981;
-    font-weight: 600;
-}
-
-.live-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #ef4444;
-    margin-right: 0.5rem;
-    animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-
-    0%,
-    100% {
-        opacity: 1;
-    }
-
-    50% {
-        opacity: 0.5;
-    }
-}
-
-.voice-avatars {
-    display: flex;
-    gap: 0.75rem;
-    padding-bottom: 0.5rem;
-    overflow-x: auto;
-}
-
-.voice-user {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.25rem;
-}
-
-.voice-user-inner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.25rem;
-}
-
-.voice-user-avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    border: 2px solid transparent;
-    transition: border-color 0.2s;
-    object-fit: cover;
-}
-
-.voice-user.speaking .voice-user-avatar {
-    border-color: #10b981;
-    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2);
-}
-
-.voice-user-name {
-    font-size: 0.7rem;
-    color: rgba(255, 255, 255, 0.6);
-}
-
-.voice-user-controls {
-    display: flex;
-    gap: 0.25rem;
-    margin-top: 0.25rem;
-}
-
-.control-icon-btn {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: white;
-    padding: 0.25rem;
-    border-radius: 4px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-}
-
-.control-icon-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-}
-
-.control-icon-btn.mute:hover {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: #ef4444;
-    color: #ef4444;
-}
-
-.control-icon-btn.kick:hover {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: #ef4444;
-    color: #ef4444;
-}
+/* 2️⃣ VoiceChannelSection - Styled within VoicePanel component */
 
 /* 3️⃣ TabsRow - FIXED HEIGHT */
 .sidebar-tabs {
@@ -498,6 +382,8 @@
     overflow-x: hidden;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    /* Stabilize flexbox */
 }
 
 /* Members Panel */
@@ -705,13 +591,21 @@
         left: 0;
         width: 100%;
         height: 35vh;
-        /* Fixed height for video area */
         z-index: 10;
         background: black;
         display: flex;
         align-items: center;
         justify-content: center;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        overflow-y: auto;
+        transition: height 0.3s ease;
+    }
+
+    .media-section.selection-mode {
+        height: calc(100vh - 60px);
+        align-items: flex-start;
+        padding-bottom: 80px;
+        /* Room for FABs */
     }
 
     /* 3. CHAT SECTION: Fixed Bottom Section (Remaining) */

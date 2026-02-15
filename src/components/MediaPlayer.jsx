@@ -421,4 +421,4 @@ const MediaPlayer = ({ media, isHost, onClearMedia, children }) => {
     );
 };
 
-export default MediaPlayer;
+export default React.memo(MediaPlayer);

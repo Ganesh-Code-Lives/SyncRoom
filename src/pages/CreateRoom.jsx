@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Video, Music, ArrowLeft, Lock, Globe, AlertCircle } from 'lucide-react';
+import { Video, ArrowLeft, Lock, Globe, AlertCircle } from 'lucide-react';
 import { useRoom } from '../context/RoomContext';
 import { useAuth } from '../context/AuthContext';
 import GlowButton from '../components/GlowButton';
@@ -14,7 +14,7 @@ const CreateRoom = () => {
     const { user, isGuest } = useAuth();
 
     const [roomName, setRoomName] = useState('');
-    const [roomType, setRoomType] = useState('video');
+    const [roomType] = useState('video');
     const [privacy, setPrivacy] = useState('private');
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -124,22 +124,14 @@ const CreateRoom = () => {
 
                     <div className="form-group">
                         <label className="input-label">Room Type</label>
-                        <div className="type-selector">
+                        <div className="type-selector single-option">
                             <button
                                 type="button"
-                                className={`type-option ${roomType === 'video' ? 'active' : ''}`}
-                                onClick={() => setRoomType('video')}
+                                className="type-option active"
+                                style={{ cursor: 'default' }}
                             >
                                 <Video size={20} />
-                                <span>Video</span>
-                            </button>
-                            <button
-                                type="button"
-                                className={`type-option ${roomType === 'audio' ? 'active' : ''}`}
-                                onClick={() => setRoomType('audio')}
-                            >
-                                <Music size={20} />
-                                <span>Audio</span>
+                                <span>Video Only</span>
                             </button>
                         </div>
                     </div>
@@ -178,4 +170,3 @@ const CreateRoom = () => {
 };
 
 export default CreateRoom;
-

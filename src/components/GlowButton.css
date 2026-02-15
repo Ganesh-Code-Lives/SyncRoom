@@ -58,6 +58,12 @@
 }
 
 /* Sizes */
+.glow-btn-xs {
+    padding: 0 0.75rem;
+    height: 30px;
+    font-size: 0.75rem;
+}
+
 .glow-btn-sm {
     padding: 0 1rem;
     height: 36px;

@@ -13,7 +13,7 @@ export function classifyUrl(url) {
     }
 
     // TYPE A — Direct video (regex to match extensions even with query params)
-    const fileExtensionRegex = /\.(mp4|webm|ogg|m3u8|mp3|wav)(?:\?.*)?$/i;
+    const fileExtensionRegex = /\.(mp4|webm|ogg|m3u8)(?:\?.*)?$/i;
     if (fileExtensionRegex.test(cleanUrl)) {
         return 'direct';
     }

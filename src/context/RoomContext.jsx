@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { socket } from '../lib/socket';
+import { sfuVoiceClient } from '../lib/sfuVoiceClient';
 
 const RoomContext = createContext();
 
@@ -23,12 +24,12 @@ export const RoomProvider = ({ children }) => {
     });
     const [chat, setChat] = useState([]);
     const [participants, setParticipants] = useState([]);
-    const [voiceParticipants, setVoiceParticipants] = useState([]);
     const [isLocked, setIsLocked] = useState(false);
     const [isHost, setIsHost] = useState(false);
     const [connectionError, setConnectionError] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
     const [activeReaction, setActiveReaction] = useState(null);
+    const [userVolumes, setUserVolumes] = useState({}); // userId -> volume (0-1)
     const [isRoomLoaded, setIsRoomLoaded] = useState(false);
     const [loadingStatus, setLoadingStatus] = useState('Initializing...'); // 'Initializing' | 'Connecting' | 'Rejoining' | 'Ready'
     const [playlist, setPlaylist] = useState([]);
@@ -124,14 +125,14 @@ export const RoomProvider = ({ children }) => {
                             code: roomData.roomId,
                             name: roomData.roomName,
                             type: roomData.roomType,
-                            hostId: roomData.hostId
+                            hostId: roomData.hostId,
+                            voiceUsers: roomData.voiceUsers || []
                         });
                         setIsHost(roomData.hostId === oderId);
                         setParticipants(roomData.users.map(u => ({
                             ...u,
                             isHost: u.oderId === roomData.hostId
                         })));
-                        setVoiceParticipants(roomData.voiceUsers || []);
                         setChat(roomData.chat || []);
                         setCurrentMedia(roomData.media);
 
@@ -294,10 +295,6 @@ export const RoomProvider = ({ children }) => {
             showError('You have been kicked from the room.');
         };
 
-        const handleVoiceUsersUpdate = (users) => {
-            setVoiceParticipants(users);
-        };
-
         const handleHostUpdate = (data) => {
             const { newHostId, users } = data;
             setRoom(prev => prev ? { ...prev, hostId: newHostId } : null);
@@ -320,6 +317,18 @@ export const RoomProvider = ({ children }) => {
             ));
         };
 
+        const handleMessageUpdated = (data) => {
+            const { messageId, newContent, isEdited } = data;
+            setChat(prev => prev.map(msg =>
+                msg.id === messageId ? { ...msg, content: newContent, isEdited } : msg
+            ));
+        };
+
+        const handleMessageDeleted = (data) => {
+            const { messageId } = data;
+            setChat(prev => prev.filter(msg => msg.id !== messageId));
+        };
+
         // Register all listeners
         socket.on('connect', handleConnect);
         socket.on('disconnect', handleDisconnect);
@@ -330,10 +339,12 @@ export const RoomProvider = ({ children }) => {
         socket.on('playback_sync', handlePlaybackSync);
         socket.on('room_locked', handleRoomLocked);
         socket.on('kicked', handleKicked);
-        socket.on('voice_users_update', handleVoiceUsersUpdate);
         socket.on('host_update', handleHostUpdate);
         socket.on('reaction_received', handleReactionReceived);
+        socket.on('reaction_received', handleReactionReceived);
         socket.on('message_reaction_update', handleMessageReactionUpdate);
+        socket.on('message_updated', handleMessageUpdated);
+        socket.on('message_deleted', handleMessageDeleted);
         socket.on('server_heartbeat', handleServerHeartbeat);
 
         return () => {
@@ -347,10 +358,11 @@ export const RoomProvider = ({ children }) => {
             socket.off('playback_sync', handlePlaybackSync);
             socket.off('room_locked', handleRoomLocked);
             socket.off('kicked', handleKicked);
-            socket.off('voice_users_update', handleVoiceUsersUpdate);
             socket.off('host_update', handleHostUpdate);
             socket.off('reaction_received', handleReactionReceived);
             socket.off('message_reaction_update', handleMessageReactionUpdate);
+            socket.off('message_updated', handleMessageUpdated);
+            socket.off('message_deleted', handleMessageDeleted);
             socket.off('server_heartbeat', handleServerHeartbeat);
             socket.disconnect();
         };
@@ -383,7 +395,8 @@ export const RoomProvider = ({ children }) => {
                         code: response.roomCode,
                         name: roomData.roomName,
                         type: roomData.roomType,
-                        hostId: roomData.hostId
+                        hostId: roomData.hostId,
+                        voiceUsers: roomData.voiceUsers || []
                     });
                     setIsHost(true);
                     setParticipants(roomData.users.map(u => ({
@@ -418,7 +431,8 @@ export const RoomProvider = ({ children }) => {
                         code: roomData.roomId,
                         name: roomData.roomName,
                         type: roomData.roomType,
-                        hostId: roomData.hostId
+                        hostId: roomData.hostId,
+                        voiceUsers: roomData.voiceUsers || []
                     });
                     setIsHost(roomData.hostId === oderId);
 
@@ -427,7 +441,6 @@ export const RoomProvider = ({ children }) => {
                         ...u,
                         isHost: u.oderId === roomData.hostId
                     })));
-                    setVoiceParticipants(roomData.voiceUsers || []);
 
                     // 3. Chat & Media
                     setChat(roomData.chat || []);
@@ -475,14 +488,14 @@ export const RoomProvider = ({ children }) => {
         setCurrentMedia(null);
         setPlayback({ isPlaying: false, currentTime: 0, duration: 0 });
         setIsHost(false);
-        setVoiceParticipants([]);
+        sfuVoiceClient.close(); // Clean up voice on exit
         navigate('/');
     }, [navigate]);
 
     // ============================================
     // CHAT
     // ============================================
-    const sendMessage = useCallback((text) => {
+    const sendMessage = useCallback((text, replyTo = null) => {
         if (!room) return;
         const { oderId, userName, userAvatar } = getUserInfo();
 
@@ -496,6 +509,8 @@ export const RoomProvider = ({ children }) => {
             content: text,
             timestamp: new Date().toISOString(),
             type: 'user',
+            replyTo,
+            isEdited: false,
             reactions: {},
             isOptimistic: true // Flag to identify temporary messages
         };
@@ -509,13 +524,45 @@ export const RoomProvider = ({ children }) => {
                 senderId: oderId,
                 senderName: userName,
                 senderAvatar: userAvatar,
-                content: text
+                content: text,
+                replyTo
             }
         });
 
         // Replace optimistic message with server message when received
         // (handled in handleNewMessage by matching content + senderId)
     }, [room, getUserInfo, user]);
+
+    const editMessage = useCallback((messageId, newContent) => {
+        if (!room) return;
+        const { oderId } = getUserInfo();
+
+        // Optimistic update
+        setChat(prev => prev.map(msg =>
+            msg.id === messageId ? { ...msg, content: newContent, isEdited: true } : msg
+        ));
+
+        socket.emit('edit_message', {
+            roomCode: room.code,
+            messageId,
+            newContent,
+            userId: oderId
+        });
+    }, [room, getUserInfo]);
+
+    const deleteMessage = useCallback((messageId) => {
+        if (!room) return;
+        const { oderId } = getUserInfo();
+
+        // Optimistic update
+        setChat(prev => prev.filter(msg => msg.id !== messageId));
+
+        socket.emit('delete_message', {
+            roomCode: room.code,
+            messageId,
+            userId: oderId
+        });
+    }, [room, getUserInfo]);
 
     const addMessageReaction = useCallback((messageId, emoji) => {
         if (!room) return;
@@ -638,32 +685,6 @@ export const RoomProvider = ({ children }) => {
     }, []);
 
     // ============================================
-    // VOICE CHAT
-    // ============================================
-    const joinVoice = useCallback(() => {
-        if (!room) return;
-        const { oderId, userName } = getUserInfo();
-        socket.emit('join_voice', { roomCode: room.code, userId: oderId, userName });
-    }, [room, getUserInfo]);
-
-    const leaveVoice = useCallback(() => {
-        if (!room) return;
-        const { oderId } = getUserInfo();
-        socket.emit('leave_voice', { roomCode: room.code, userId: oderId });
-    }, [room, getUserInfo]);
-
-    const toggleVoice = useCallback(() => {
-        const { oderId } = getUserInfo();
-        const isInVoice = voiceParticipants.some(p => p.oderId === oderId);
-
-        if (isInVoice) {
-            leaveVoice();
-        } else {
-            joinVoice();
-        }
-    }, [voiceParticipants, getUserInfo, joinVoice, leaveVoice]);
-
-    // ============================================
     // SYNC REQUEST (For reconnection)
     // ============================================
     const requestSync = useCallback(() => {
@@ -708,13 +729,7 @@ export const RoomProvider = ({ children }) => {
         isHost: isHost
     };
 
-    // ============================================
-    // CONTEXT VALUE
-    // ============================================
-    // ============================================
-    // CONTEXT VALUE
-    // ============================================
-    const value = React.useMemo(() => ({
+    const value = useMemo(() => ({
         // State
         room,
         currentUser,
@@ -722,7 +737,6 @@ export const RoomProvider = ({ children }) => {
         playback,
         chat,
         participants,
-        voiceParticipants,
         isLocked,
         isHost,
         isRoomLoaded,
@@ -739,7 +753,10 @@ export const RoomProvider = ({ children }) => {
         leaveRoom,
 
         // Chat
+        // Chat
         sendMessage,
+        editMessage,
+        deleteMessage,
         addMessageReaction,
         sendReaction,
 
@@ -754,11 +771,6 @@ export const RoomProvider = ({ children }) => {
         transferHost,
         muteParticipant,
 
-        // Voice
-        joinVoice,
-        leaveVoice,
-        toggleVoice,
-
         // Playlist
         addToQueue,
         removeFromQueue,
@@ -768,26 +780,24 @@ export const RoomProvider = ({ children }) => {
         requestSync
     }), [
         room,
-        currentUser.id, currentUser.name, currentUser.avatar, currentUser.isHost, currentUser.oderId, // Deconstruct currentUser to be safe
+        currentUser.id, currentUser.name, currentUser.avatar, currentUser.isHost, currentUser.oderId,
         currentMedia,
         playback,
         chat,
         participants,
-        voiceParticipants,
         isLocked,
         isHost,
         isRoomLoaded,
         loadingStatus,
         isConnected,
         connectionError,
-        // playerRef is a ref, stable
         playlist,
         activeReaction,
         createRoom, joinRoom, leaveRoom,
-        sendMessage, addMessageReaction, sendReaction,
+        createRoom, joinRoom, leaveRoom,
+        sendMessage, addMessageReaction, sendReaction, editMessage, deleteMessage,
         updatePlayback, setMedia, clearMedia,
         toggleLock, kickParticipant, transferHost, muteParticipant,
-        joinVoice, leaveVoice, toggleVoice,
         addToQueue, removeFromQueue, voteSkip,
         requestSync
     ]);

@@ -12,9 +12,13 @@ import { useToast } from '../context/ToastContext';
 
 import MediaSelector from '../components/MediaSelector';
 import ChatPanel from '../components/ChatPanel';
-import Playlist from '../components/Playlist';
 import MediaPlayer from '../components/MediaPlayer';
 import FullscreenChatOverlay from '../components/FullscreenChatOverlay';
+import VoiceManager from '../components/VoiceManager';
+import VoicePanel from '../components/VoicePanel';
+import VoiceBottomSheet from '../components/voice/VoiceBottomSheet';
+import LoadingScreen from '../components/LoadingScreen';
+import { useVoice } from '../context/VoiceContext';
 
 // ========================================================
 // MEMOIZED MEDIA SECTION
@@ -27,7 +31,7 @@ const MemoizedMediaSection = React.memo(({ currentMedia, isHost, chat, participa
     const mediaKey = currentMedia?.id || currentMedia?.url || 'media-player-root';
 
     return (
-        <div className="media-section">
+        <div className={classNames("media-section", { "selection-mode": !currentMedia })}>
             <div className="video-container">
                 {!currentMedia ? (
                     isHost ? (
@@ -64,16 +68,24 @@ const Room = () => {
     const navigate = useNavigate();
     // ... existing hooks
     const {
-        room, currentUser, currentMedia, setMedia, clearMedia, playback, chat, participants, voiceParticipants, activeReaction,
-        sendMessage, updatePlayback, toggleVoice, sendReaction,
+        room, currentUser, currentMedia, setMedia, clearMedia, playback, chat, participants, activeReaction,
+        sendMessage, updatePlayback, sendReaction,
         isLocked, isHost, toggleLock, kickParticipant, muteParticipant, addMessageReaction,
         playlist, addToQueue, voteSkip, removeFromQueue, transferHost,
-        isRoomLoaded, loadingStatus, joinRoom, leaveRoom, isConnected // <--- Added leaveRoom for exit button
+        isRoomLoaded, loadingStatus, joinRoom, leaveRoom, isConnected
     } = useRoom();
+
+    const {
+        voiceParticipants, toggleVoice, isMuted, toggleMute,
+        isVoiceOpenMobile, setIsVoiceOpenMobile
+    } = useVoice();
 
     const playerRef = useRef(null);
     // State for UI
-    const [sidebarTab, setSidebarTab] = useState(() => sessionStorage.getItem('syncroom_sidebar_tab') || 'chat');
+    const [sidebarTab, setSidebarTab] = useState(() => {
+        const stored = sessionStorage.getItem('syncroom_sidebar_tab');
+        return (stored && stored !== 'queue') ? stored : 'chat';
+    });
     const [isSidePanelVisible, setIsSidePanelVisible] = useState(true); // Desktop sidebar toggle
     const [showMobileChat, setShowMobileChat] = useState(false);
     const [showMobileSettings, setShowMobileSettings] = useState(false);
@@ -176,17 +188,19 @@ const Room = () => {
     if (!isRoomLoaded) {
         // Safe access to loadingStatus from context, default to "Loading..."
         const status = loadingStatus || "Loading Room...";
-        return <div className="loading-screen">{status}</div>;
+        return <LoadingScreen message={status} />;
     }
 
     if (!room) {
         return <div className="loading-screen">Room not found. Redirecting...</div>;
     }
 
-    const isVoiceActive = voiceParticipants.some(p => p.id === currentUser?.id);
+    const isVoiceActive = voiceParticipants.some(p => p.oderId === currentUser?.oderId);
 
     return (
         <div className="room-page">
+            <VoiceManager />
+            <VoiceBottomSheet />
             {/* MOBILE HEADER - Fixed Top */}
             <div className="mobile-header">
                 <button className="mobile-back-btn" onClick={() => navigate('/')}>
@@ -240,7 +254,7 @@ const Room = () => {
                                 <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                     {participants.map(p => (
                                         <div key={p.oderId || p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
-                                            <img src={p.avatar} alt={p.name} style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
+                                            <img src={p.avatar} alt={p.name} style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0, aspectRatio: '1/1' }} />
                                             <div style={{ flex: 1 }}>
                                                 <div style={{ fontSize: '0.9rem', fontWeight: '500' }}>
                                                     {p.name} {p.id === currentUser?.id && '(You)'}
@@ -379,26 +393,13 @@ const Room = () => {
                     </div>
                 </div>
 
-                <div className="voice-panel">
-                    {/* Simplified Voice Panel for Desktop (Same as before) */}
-                    <div className="voice-status"><span>VOICE ACTIVE</span> <span className="live-dot"></span></div>
-                    <div className="voice-avatars">
-                        {voiceParticipants.map(u => (
-                            <div key={u.id} className="voice-user">
-                                <img src={u.avatar} className="voice-user-avatar" alt={u.name} />
-                            </div>
-                        ))}
-                        {voiceParticipants.length === 0 && <span className="text-muted">Empty</span>}
-                    </div>
-                    <GlowButton onClick={toggleVoice} size="sm" fullWidth>
-                        {isVoiceActive ? "Leave Voice" : "Join Voice"}
-                    </GlowButton>
+                <div className="desktop-voice-panel">
+                    <VoicePanel />
                 </div>
 
                 <div className="sidebar-tabs">
                     <button className={classNames("tab-btn", { active: sidebarTab === 'chat' })} onClick={() => setSidebarTab('chat')}>Chat</button>
                     <button className={classNames("tab-btn", { active: sidebarTab === 'members' })} onClick={() => setSidebarTab('members')}>Members</button>
-                    <button className={classNames("tab-btn", { active: sidebarTab === 'queue' })} onClick={() => setSidebarTab('queue')}>Queue</button>
                 </div>
 
                 <div className="sidebar-content">
@@ -461,17 +462,20 @@ const Room = () => {
                         </div>
                     </div>
 
-                    {/* QUEUE TAB */}
-                    <div style={{ display: sidebarTab === 'queue' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
-                        <Playlist playlist={playlist} currentMedia={currentMedia} onPlay={setMedia} onRemove={removeFromQueue} onVoteSkip={voteSkip} isHost={isHost} />
-                    </div>
                 </div>
             </div>
 
             {/* MOBILE FABS */}
-            <div className="mobile-fabs" style={{ display: showMobileChat ? 'none' : 'flex' }}>
-
-            </div>
+            {/* MOBILE VOICE FAB */}
+            {!showMobileChat && (
+                <button
+                    className={`mobile-voice-fab ${voiceParticipants.some(p => p.oderId === currentUser?.oderId) ? 'active' : ''}`}
+                    onClick={() => setIsVoiceOpenMobile(true)}
+                >
+                    {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
+                    {voiceParticipants.length > 0 && <span className="speaking-count-badge">{voiceParticipants.length}</span>}
+                </button>
+            )}
 
             {/* Reconnecting Overlay */}
             {!isConnected && (

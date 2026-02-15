@@ -1,627 +1,267 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { useRoom } from '../context/RoomContext';
 import { socket } from '../lib/socket';
+import { sfuClient } from '../lib/sfuClient';
 import './SharedViewPlayer.css';
 
-import { RTC_CONFIG } from '../lib/turnConfig';
-
-// ==========================================
-// PURE VIEW COMPONENT (Memoized)
-// ==========================================
-// This component only re-renders if isHost, roomCode, or media identity changes.
-// It ignores chat updates, participant list changes (unless critically needed), etc.
-const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, participantsRef, onClearMedia }) => {
+const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedia }) => {
     const videoRef = useRef(null);
-    const streamRef = useRef(null);
-    const peersRef = useRef(new Map());
-    const memberPcRef = useRef(null);
-    const memberIceQueueRef = useRef([]);
-
-    // Track retries to prevent infinite loops
-    const retryCountRef = useRef(0);
-
-    const [status, setStatus] = useState(() => {
-        if (isHost) return 'idle';
-        // If we load in and media is already 'shared', we are likely waiting for an offer, not "waiting for host to start"
-        // But 'waiting' is a fine initial state, we just need to handle the UI text better or trigger 'ready' immediately.
-        return 'waiting';
-    });
+    const [status, setStatus] = useState(isHost ? 'idle' : 'waiting');
     const [error, setError] = useState(null);
+    const activeConsumersRef = useRef(new Set());
+    const statusRef = useRef(status);
+
+    useEffect(() => {
+        statusRef.current = status;
+    }, [status]);
 
     const stopSharing = useCallback(() => {
-        const stream = streamRef.current;
-        if (stream) {
-            stream.getTracks().forEach(t => t.stop());
-            streamRef.current = null;
-        }
-        peersRef.current.forEach(pc => pc.close());
-        peersRef.current.clear();
+        sfuClient.close();
         if (roomCode) {
             socket.emit('screen_share_stop', { roomCode });
         }
         setStatus('idle');
         onClearMedia?.();
+        if (videoRef.current) videoRef.current.srcObject = null;
     }, [roomCode, onClearMedia]);
 
-    const createOfferForMember = useCallback(async (memberSocketId, isRetry = false) => {
-        const stream = streamRef.current;
-        if (!stream || !roomCode) return;
-
-        // 1. Get or Create PeerConnection
-        let pc = peersRef.current.get(memberSocketId);
-        let isNew = false;
-
-        if (!pc || isRetry) {
-            if (pc) {
-                console.log(`[SharedView] Closing existing connection for retry: ${memberSocketId}`);
-                pc.close();
-            }
-
-            console.log(`[SharedView] Creating NEW connection for ${memberSocketId} (Retry: ${isRetry})`);
-            pc = new RTCPeerConnection(RTC_CONFIG);
-            peersRef.current.set(memberSocketId, pc);
-            isNew = true;
-
-            pc.oniceconnectionstatechange = async () => {
-                console.log(`[SharedView] ICE State (${memberSocketId}): ${pc.iceConnectionState}`);
-                // ICE Restart Logic: Handle both 'failed' and 'disconnected'
-                if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-                    // Check if we have already retried for this specific connection to avoid loops
-                    if (!pc.hasRetried) {
-                        console.warn(`[SharedView] Connection unstable (${pc.iceConnectionState}) for ${memberSocketId}. STARTING ICE RESTART...`);
-                        pc.hasRetried = true; // Mark as retried
-
-                        try {
-                            pc.restartIce();
-                            const offer = await pc.createOffer({ iceRestart: true });
-
-                            // Apply bitrate fix to restart offer too
-                            const modifiedSdp = offer.sdp.replace(/(m=video.*\r\n)/, '$1b=AS:1500\r\n');
-                            offer.sdp = modifiedSdp;
-
-                            await pc.setLocalDescription(offer);
-                            socket.emit('screen_share_offer', { to: memberSocketId, offer });
-                        } catch (err) {
-                            console.error(`[SharedView] ICE Restart failed for ${memberSocketId}:`, err);
-                        }
-                    } else {
-                        console.warn(`[SharedView] Connection failed/disconnected again for ${memberSocketId}. No more retries.`);
-                    }
-                }
-
-                if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-                    // Log active candidate pair for debugging
-                    pc.getStats().then(stats => {
-                        stats.forEach(report => {
-                            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-                                console.log(`[SharedView] Connected to ${memberSocketId}. Selected Pair:`,
-                                    report.remoteCandidateId,
-                                    report.localCandidateId,
-                                    `\nType: ${report.type}`
-                                );
-                            }
-                        });
-                    });
-                }
-            };
-
-            pc.onconnectionstatechange = () => {
-                console.log(`[SharedView] Connection State (${memberSocketId}): ${pc.connectionState}`);
-            };
-
-            pc.onicegatheringstatechange = () => {
-                console.log(`[SharedView] ICE Gathering State (${memberSocketId}): ${pc.iceGatheringState}`);
-            };
-
-            pc.onicecandidateerror = (event) => {
-                console.error(`[SharedView] ❌ ICE CANDIDATE ERROR (${memberSocketId}):`, {
-                    errorCode: event.errorCode,
-                    errorText: event.errorText,
-                    url: event.url,
-                    address: event.address,
-                    port: event.port
-                });
-            };
-
-            pc.onicecandidate = (e) => {
-                if (e.candidate) {
-                    // Strict Candidate Type Logging
-                    if (e.candidate.candidate.includes('typ relay')) {
-                        console.log(`[SharedView] 🟢 USING TURN RELAY for ${memberSocketId}`);
-                    }
-                    console.log("[SharedView] ICE Candidate Type:", e.candidate.type);
-                    console.log(`[SharedView] ICE Candidate to ${memberSocketId}:`, e.candidate.candidate);
-                    socket.emit('screen_share_ice', { to: memberSocketId, candidate: e.candidate });
-                }
-            };
-        } else {
-            console.log(`[SharedView] RENEGOTIATING with ${memberSocketId}`);
-        }
-
-        // 2. Add Tracks (Strict Check)
-        const senders = pc.getSenders();
-        stream.getTracks().forEach(track => {
-            // STRICT ID CHECK: Only add if track ID is not already being sent
-            const hasTrack = senders.find(s => s.track && s.track.id === track.id);
-            if (!hasTrack) {
-                console.log(`[SharedView] Adding track ${track.kind} (${track.id}) to ${memberSocketId}`);
-                pc.addTrack(track, stream);
-            } else {
-                console.log(`[SharedView] Track ${track.kind} (${track.id}) already exists for ${memberSocketId}`);
-            }
-        });
-
-        // 3. Create and Send Offer (Force renegotiation)
-        try {
-            const offer = await pc.createOffer();
-
-            // Increase bitrate for better quality (4 Mbps video for high quality screen share)
-            // Using 4000 instead of 1500 for high quality
-            const modifiedSdp = offer.sdp.replace(
-                /(m=video.*\r\n)/,
-                '$1b=AS:4000\r\n'
-            );
-            offer.sdp = modifiedSdp;
-
-            await pc.setLocalDescription(offer);
-
-            // MODERN API: Set bitrate on the sender after setLocalDescription
-            const sender = pc.getSenders().find(s => s.track?.kind === "video");
-            if (sender && sender.getParameters) {
-                const params = sender.getParameters();
-                if (!params.encodings) params.encodings = [{}];
-                params.encodings[0].maxBitrate = 4000000; // 4 Mbps
-                sender.setParameters(params).catch(e => console.warn("[SharedView] setParameters failed:", e));
-            }
-
-            socket.emit('screen_share_offer', { to: memberSocketId, offer });
-        } catch (err) {
-            console.error(`[SharedView] Failed to create offer for ${memberSocketId}:`, err);
-            // If new connection failed, clean up
-            if (isNew) {
-                pc.close();
-                peersRef.current.delete(memberSocketId);
-            }
-        }
-    }, [roomCode]);
-
-    // Host: capture stream
     const startCapture = useCallback(async () => {
         if (!isHost || !roomCode) return;
+        if (status === 'capturing' || status === 'sharing') return;
 
         try {
+            console.log("[SFU] Host starting capture...");
             setStatus('capturing');
 
-            let stream;
-            try {
-                // Try with audio first
-                stream = await navigator.mediaDevices.getDisplayMedia({
-                    video: {
-                        displaySurface: 'browser', // Hint for tab capture
-                        width: { max: 1920, ideal: 1920 },
-                        height: { max: 1080, ideal: 1080 },
-                        frameRate: { max: 30, ideal: 30 } // 30fps is superior for text/code clarity
-                    },
-                    audio: {
-                        echoCancellation: false,
-                        noiseSuppression: false,
-                        autoGainControl: false
-                    }
-                });
-            } catch (audioErr) {
-                console.warn("[SharedView] Audio capture failed or cancelled, trying video only...", audioErr);
-                // Fallback to video only if first attempt failed (unlikely for getDisplayMedia, but good safety)
+            console.log("[SFU] Host initializing sfuClient...");
+            await sfuClient.init(roomCode);
+            console.log("[SFU] Host sfuClient init OK");
+
+            const stream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    width: { max: 1920, ideal: 1920 },
+                    height: { max: 1080, ideal: 1080 },
+                    frameRate: { max: 30, ideal: 30 }
+                },
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false,
+                    channelCount: 2,
+                    sampleRate: 48000,
+                    sampleSize: 16,
+                    latency: 0
+                }
+            });
+
+            console.log("[SFU] Stream acquired");
+
+            // --- PROFESSIONAL AUDIO PIPELINE (COMPRESSOR + GAIN) ---
+            const audioTrack = stream.getAudioTracks()[0];
+            if (audioTrack) {
                 try {
-                    stream = await navigator.mediaDevices.getDisplayMedia({
-                        video: {
-                            displaySurface: 'browser',
-                            width: { max: 1920, ideal: 1920 },
-                            height: { max: 1080, ideal: 1080 },
-                            frameRate: { max: 30, ideal: 30 }
-                        },
-                        audio: false // Explicitly disable audio in fallback
-                    });
-                } catch (videoErr) {
-                    console.error("[SharedView] Video-only fallback failed:", videoErr);
-                    throw videoErr;
+                    console.log("[SFU] Initializing Professional Audio Processing...");
+                    const audioContext = new AudioContext({ sampleRate: 48000 });
+                    const source = audioContext.createMediaStreamSource(new MediaStream([audioTrack]));
+                    const gainNode = audioContext.createGain();
+                    const compressor = audioContext.createDynamicsCompressor();
+
+                    // Mild compression to prevent clipping with high gain
+                    compressor.threshold.setValueAtTime(-10, audioContext.currentTime);
+                    compressor.knee.setValueAtTime(20, audioContext.currentTime);
+                    compressor.ratio.setValueAtTime(3, audioContext.currentTime);
+                    compressor.attack.setValueAtTime(0.003, audioContext.currentTime);
+                    compressor.release.setValueAtTime(0.25, audioContext.currentTime);
+
+                    gainNode.gain.value = 1.6; // 1.6x Boost (Safe range)
+
+                    // Chain: Source -> Compressor -> Gain -> Destination
+                    source.connect(compressor);
+                    compressor.connect(gainNode);
+
+                    const destination = audioContext.createMediaStreamDestination();
+                    gainNode.connect(destination);
+
+                    const boostedTrack = destination.stream.getAudioTracks()[0];
+                    console.log("[SFU] Audio pipeline active: Compressor -> Gain(1.6x)");
+
+                    // Replace original track with processed track
+                    stream.removeTrack(audioTrack);
+                    stream.addTrack(boostedTrack);
+
+                } catch (e) {
+                    console.error("[SFU] Audio processing failed:", e);
                 }
             }
+            // --------------------------------------------------------
 
-            streamRef.current = stream;
-
-            // TRACK OPTIMIZATION: Set content hint for sharper text
             const videoTrack = stream.getVideoTracks()[0];
             if (videoTrack && 'contentHint' in videoTrack) {
-                videoTrack.contentHint = 'detail'; // Optimizes for text/static content
-                console.log("[SharedView] Track contentHint set to 'detail'");
+                videoTrack.contentHint = 'detail';
             }
 
-            stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+            videoTrack.onended = () => {
+                console.log("[SFU] Stream ended (onended)");
                 stopSharing();
-            });
+            };
 
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
             }
 
-            // CRITICAL: Immediately iterate all participants and start negotiation
-            // This ensures members who joined BEFORE share starts get the stream
-            // Use the REF here to ensure we have latest participants without re-rendering
-            const currentParticipants = participantsRef.current || [];
-            console.log(`[SharedView] Stream acquired. Starting negotiation with ${currentParticipants.length} participants.`);
+            console.log("[SFU] Producing tracks...");
+            for (const track of stream.getTracks()) {
+                console.log(`[SFU] Producing ${track.kind} track...`);
+                const producer = await sfuClient.produce(track);
 
-            currentParticipants.forEach(p => {
-                // Don't offer to self or if socket ID is missing
-                if (p.id && p.id !== socket.id) {
-                    createOfferForMember(p.id);
+                if (producer.rtpSender) {
+                    try {
+                        const params = producer.rtpSender.getParameters();
+                        if (!params.encodings) params.encodings = [{}];
+
+                        if (track.kind === 'video') {
+                            params.encodings[0].maxBitrate = 2000000; // 2Mbps
+                            console.log("[SFU] Video bitrate capped at 2Mbps");
+                        } else if (track.kind === 'audio') {
+                            params.encodings[0].maxBitrate = 128000; // 128kbps Opus
+                            params.encodings[0].priority = 'high';
+                            console.log("[SFU] Audio bitrate set to 128kbps (High Priority)");
+                        }
+
+                        await producer.rtpSender.setParameters(params);
+                    } catch (e) {
+                        console.warn(`[SFU] Failed to set bitrate for ${track.kind}:`, e);
+                    }
                 }
-            });
+            }
+            console.log("[SFU] All tracks produced");
 
-            socket.emit('screen_share_start', {
-                roomCode,
-                userId: hostId
-            });
-
+            socket.emit('screen_share_start', { roomCode, userId: hostId });
             setStatus('sharing');
         } catch (err) {
-            console.error("Screen Share Error:", err);
-            // Only set error if it wasn't a simple user cancellation
+            console.error("[SFU] Host Capture failed:", err);
             if (err.name !== 'NotAllowedError') {
-                setError(err.message || 'Failed to share screen');
+                setError("Failed to share screen. " + (err.message || err));
             }
             setStatus('idle');
         }
-    }, [isHost, roomCode, hostId, stopSharing, createOfferForMember, participantsRef]);
+    }, [isHost, roomCode, hostId, stopSharing, status]);
 
-    // Auto-start / Re-negotiate on mount for members
-    useEffect(() => {
-        if (!isHost && roomCode) {
-            console.log('[SharedView] Joining active stream, requesting offer...');
-            socket.emit('screen_share_ready', { roomCode });
+    const consumeProducer = useCallback(async (producerId) => {
+        if (activeConsumersRef.current.has(producerId)) return;
+        activeConsumersRef.current.add(producerId);
+
+        try {
+            console.log(`[SFU] Consuming producer: ${producerId}`);
+            const consumer = await sfuClient.consume(producerId);
+
+            if (consumer.kind === 'video') {
+                console.log(`[SFU] Attaching video track: ${consumer.track.id}`);
+                const stream = new MediaStream([consumer.track]);
+                if (videoRef.current) {
+                    videoRef.current.srcObject = stream;
+                    try {
+                        await videoRef.current.play();
+                        console.log("[SFU] Video playback started successfully");
+                        setStatus('playing');
+                    } catch (playErr) {
+                        console.error("[SFU] Video play failed:", playErr);
+                        setStatus('playing');
+                    }
+                }
+            } else if (consumer.kind === 'audio') {
+                console.log(`[SFU] Attaching audio track: ${consumer.track.id}`);
+                if (videoRef.current && videoRef.current.srcObject) {
+                    videoRef.current.srcObject.addTrack(consumer.track);
+                } else if (videoRef.current) {
+                    videoRef.current.srcObject = new MediaStream([consumer.track]);
+                }
+            }
+        } catch (err) {
+            console.error(`[SFU] Failed to consume producer ${producerId}:`, err);
+            activeConsumersRef.current.delete(producerId);
         }
-        // Just clear error if we change host status
-        if (!isHost) setError(null);
-    }, [isHost, roomCode]);
+    }, []);
 
-    // Host: handle member ready - create offer when they request
     useEffect(() => {
-        if (!isHost || !roomCode) return;
+        if (isHost || !roomCode) return;
 
-        const onRequestOffer = ({ memberSocketId }) => {
-            // Only answer if we are actually sharing
-            if (streamRef.current && status === 'sharing') {
-                createOfferForMember(memberSocketId);
-            }
-        };
-
-        socket.on('screen_share_request_offer', onRequestOffer);
-        return () => socket.off('screen_share_request_offer', onRequestOffer);
-    }, [isHost, roomCode, status, createOfferForMember]);
-
-
-    // Host: handle new member joining while sharing (Legacy + New Direct Trigger)
-    useEffect(() => {
-        if (!isHost) return;
-
-        // ORIGINAL: Relies on 'user_joined'
-        const onUserJoined = (data) => {
-            if (status === 'sharing' && data.socketId && data.socketId !== socket.id) {
-                console.log(`[SharedView] User Joined: ${data.socketId}. Initiating offer.`);
-                createOfferForMember(data.socketId);
-            }
-        };
-
-        // NEW: Handles 'new_peer_for_sharing' (Specific trigger from server for reloads/late joins)
-        const onNewPeer = (data) => {
-            // Only act if we are actually sharing
-            if (status === 'sharing' || streamRef.current) {
-                console.log(`[SharedView] Server requested share for new peer: ${data.socketId}`);
-                createOfferForMember(data.socketId);
-            }
-        };
-
-        socket.on('user_joined', onUserJoined);
-        socket.on('new_peer_for_sharing', onNewPeer);
-
-        return () => {
-            socket.off('user_joined', onUserJoined);
-            socket.off('new_peer_for_sharing', onNewPeer);
-        };
-    }, [isHost, status, createOfferForMember]);
-
-    // Member: receive stream - full WebRTC flow
-    useEffect(() => {
-        if (isHost) return;
-
-        const flushIceQueue = async (pc) => {
-            while (memberIceQueueRef.current.length > 0) {
-                const cand = memberIceQueueRef.current.shift();
-                try {
-                    await pc.addIceCandidate(new RTCIceCandidate(cand));
-                } catch (e) { }
-            }
-        };
-
-        const handleOffer = async ({ from, offer }) => {
-            setStatus('connecting');
-            memberIceQueueRef.current = [];
-
-            if (memberPcRef.current) {
-                memberPcRef.current.close();
-                memberPcRef.current = null;
-            }
-
-            const pc = new RTCPeerConnection(RTC_CONFIG);
-            memberPcRef.current = pc;
-
-            pc.oniceconnectionstatechange = () => {
-                console.log(`[SharedView] Member ICE State: ${pc.iceConnectionState}`);
-                if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-                    if (retryCountRef.current < 1) {
-                        console.warn(`[SharedView] Connection unstable (${pc.iceConnectionState}). Attempting ONE retry...`);
-                        retryCountRef.current++;
-                        // Request new offer from host
-                        socket.emit('screen_share_ready', { roomCode });
-                    } else {
-                        console.warn('[SharedView] Connection failed/disconnected after retry. Giving up.');
-                        setError("Connection unstable. Host may need to restart sharing.");
-                    }
-                }
-                if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-                    // Reset retry count on successful connection
-                    retryCountRef.current = 0;
-
-                    // Log active candidate pair and receiver status for debugging
-                    pc.getReceivers().forEach(r => {
-                        console.log(`[SharedView] Receiver track (${r.track?.kind}):`, r.track?.readyState);
-                    });
-
-                    pc.getStats().then(stats => {
-                        stats.forEach(report => {
-                            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-                                console.log(`[SharedView] Member Connected. Selected Pair:`,
-                                    report.remoteCandidateId,
-                                    report.localCandidateId,
-                                    `\nType: ${report.type}`
-                                );
-                            }
-                        });
-                    });
-                }
-            };
-
-            pc.onconnectionstatechange = () => {
-                console.log(`[SharedView] Member Connection State: ${pc.connectionState}`);
-            };
-
-            // SAFE PATTERN FOR VIDEO ATTACHMENT
-            // SAFE PATTERN FOR VIDEO ATTACHMENT
-            pc.ontrack = (event) => {
-                console.log("[SharedView] TRACK RECEIVED", event.streams);
-                const remoteStream = event.streams[0];
-
-                if (!remoteStream) {
-                    console.warn("[SharedView] ontrack fired but no stream found!");
-                    return;
-                }
-
-                const video = videoRef.current;
-                if (video) {
-                    video.srcObject = remoteStream;
-                    setStatus('playing');
-
-                    video.onloadedmetadata = () => {
-                        video.play().catch((e) => {
-                            console.warn("[SharedView] Autoplay blocked, trying muted...", e);
-                            video.muted = true;
-                            video.play().catch((e2) => {
-                                console.error("[SharedView] Play failed even when muted:", e2);
-                            });
-                        });
-                    };
-
-                    // Receiver track debug
-                    pc.getReceivers().forEach(r => {
-                        console.log("[SharedView] Receiver status:", r.track?.kind, r.track?.readyState);
-                    });
-                } else {
-                    console.error("[SharedView] Video element not found when track arrived!");
-                }
-            };
-
-            pc.onicecandidate = (e) => {
-                if (e.candidate) {
-                    if (e.candidate.candidate.includes('typ relay')) {
-                        console.log(`[SharedView] 🟢 MEMBER USING TURN RELAY`);
-                    }
-                    console.log(`[SharedView] Member ICE Candidate:`, e.candidate.candidate);
-                    socket.emit('screen_share_ice', { to: from, candidate: e.candidate });
-                }
-            };
-
-            pc.onicegatheringstatechange = () => {
-                console.log(`[SharedView] Member ICE Gathering State: ${pc.iceGatheringState}`);
-            };
-
+        const initSfu = async () => {
             try {
-                await pc.setRemoteDescription(new RTCSessionDescription(offer));
-                await flushIceQueue(pc);
+                console.log("[SFU] Member joining room: " + roomCode);
+                setStatus('connecting');
 
-                const answer = await pc.createAnswer();
+                await sfuClient.init(roomCode);
+                console.log("[SFU] sfuClient init finished, waiting for producers...");
 
-                // Increase bitrate for better quality on member side (4 Mbps)
-                const modifiedSdp = answer.sdp.replace(
-                    /(m=video.*\r\n)/,
-                    '$1b=AS:4000\r\n'
-                );
-                answer.sdp = modifiedSdp;
-
-                await pc.setLocalDescription(answer);
-
-                // MODERN API: Also set on member's answer side (though less critical than host)
-                const sender = pc.getSenders().find(s => s.track?.kind === "video");
-                if (sender && sender.getParameters) {
-                    const params = sender.getParameters();
-                    if (!params.encodings) params.encodings = [{}];
-                    params.encodings[0].maxBitrate = 4000000;
-                    sender.setParameters(params).catch(e => { });
-                }
-
-                socket.emit('screen_share_answer', { to: from, answer });
+                setTimeout(() => {
+                    if (statusRef.current === 'connecting' && activeConsumersRef.current.size === 0) {
+                        console.log("[SFU] No producers arrived, setting to waiting");
+                        setStatus('waiting');
+                    }
+                }, 4000);
             } catch (err) {
-                console.error("[SharedView] Connection failed:", err);
-                if (memberPcRef.current) {
-                    memberPcRef.current.close();
-                    memberPcRef.current = null;
-                }
-                // If connection fails, tell user the host might need to retry
-                setError("Connection failed. Host needs to restart sharing.");
+                console.error("[SFU] Member Init failed:", err);
+                setError("Connection timeout. Please reload. " + (err.message || err));
                 setStatus('idle');
             }
         };
 
-        const handleAnswer = async ({ from, answer }) => {
-            const pc = peersRef.current.get(from);
-            if (pc) {
-                try {
-                    await pc.setRemoteDescription(new RTCSessionDescription(answer));
-                } catch (e) { }
+        const onExistingProducers = async ({ producerIds }) => {
+            console.log(`[SFU] Existing producers detected: ${producerIds.length}`);
+            for (const id of producerIds) {
+                await consumeProducer(id);
             }
         };
 
-        const handleIce = async ({ from, candidate }) => {
-            const pc = memberPcRef.current;
-            if (!pc) {
-                memberIceQueueRef.current.push(candidate);
-                return;
-            }
-            if (pc.remoteDescription) {
-                try {
-                    await pc.addIceCandidate(new RTCIceCandidate(candidate));
-                } catch (e) { }
-            } else {
-                memberIceQueueRef.current.push(candidate);
-            }
+        const onNewProducer = ({ producerId }) => {
+            console.log(`[SFU] New producer: ${producerId}`);
+            consumeProducer(producerId);
         };
 
-        const handleStopped = () => {
-            if (memberPcRef.current) {
-                memberPcRef.current.close();
-                memberPcRef.current = null;
-            }
-            if (videoRef.current) videoRef.current.srcObject = null;
+        const onConsumerClosed = ({ consumerId }) => {
+            console.log(`[SFU] Consumer closed: ${consumerId}`);
+            if (activeConsumersRef.current.size === 0) setStatus('waiting');
+        };
+
+        const onStopped = () => {
+            console.log("[SFU] Host stopped sharing");
             setStatus('stopped');
+            if (videoRef.current) videoRef.current.srcObject = null;
+            activeConsumersRef.current.clear();
             onClearMedia?.();
         };
 
-        const handleStarted = () => {
-            setStatus('waiting');
-            setError(null);
-            socket.emit('screen_share_ready', { roomCode });
-        };
+        socket.on('existing-producers', onExistingProducers);
+        socket.on('new_producer', onNewProducer);
+        socket.on('consumer_closed', onConsumerClosed);
+        socket.on('screen_share_stopped', onStopped);
 
-        socket.on('screen_share_started', handleStarted);
-        socket.on('screen_share_offer', handleOffer);
-        socket.on('screen_share_answer', handleAnswer);
-        socket.on('screen_share_ice', handleIce);
-        socket.on('screen_share_stopped', handleStopped);
+        initSfu();
 
         return () => {
-            socket.off('screen_share_started', handleStarted);
-            socket.off('screen_share_offer', handleOffer);
-            socket.off('screen_share_answer', handleAnswer);
-            socket.off('screen_share_ice', handleIce);
-            socket.off('screen_share_stopped', handleStopped);
-            if (memberPcRef.current) {
-                memberPcRef.current.close();
-                memberPcRef.current = null;
-            }
+            socket.off('existing-producers', onExistingProducers);
+            socket.off('new_producer', onNewProducer);
+            socket.off('consumer_closed', onConsumerClosed);
+            socket.off('screen_share_stopped', onStopped);
+            sfuClient.close();
         };
-    }, [isHost, roomCode, onClearMedia]);
-
-    // Host: handle answer and ICE
-    const hostIceQueuesRef = useRef(new Map());
-
-    useEffect(() => {
-        if (!isHost) return;
-
-        const flushIceQueue = async (memberId) => {
-            const pc = peersRef.current.get(memberId);
-            const queue = hostIceQueuesRef.current.get(memberId) || [];
-            hostIceQueuesRef.current.set(memberId, []);
-            for (const cand of queue) {
-                if (pc) {
-                    try {
-                        await pc.addIceCandidate(new RTCIceCandidate(cand));
-                    } catch (e) { }
-                }
-            }
-        };
-
-        const handleAnswer = async ({ from, answer }) => {
-            const pc = peersRef.current.get(from);
-            if (pc) {
-                try {
-                    await pc.setRemoteDescription(new RTCSessionDescription(answer));
-                    await flushIceQueue(from);
-                } catch (e) { }
-            }
-        };
-
-        const handleIce = async ({ from, candidate }) => {
-            const pc = peersRef.current.get(from);
-            if (!pc) return;
-            if (pc.remoteDescription) {
-                try {
-                    await pc.addIceCandidate(new RTCIceCandidate(candidate));
-                } catch (e) { }
-            } else {
-                const queue = hostIceQueuesRef.current.get(from) || [];
-                queue.push(candidate);
-                hostIceQueuesRef.current.set(from, queue);
-            }
-        };
-
-        socket.on('screen_share_answer', handleAnswer);
-        socket.on('screen_share_ice', handleIce);
-
-        return () => {
-            socket.off('screen_share_answer', handleAnswer);
-            socket.off('screen_share_ice', handleIce);
-        };
-    }, [isHost]);
-
-    // Cleanup on unmount
-    useEffect(() => {
-        return () => {
-            // CRITICAL: Don't call stopSharing() here - it clears media on every re-render!
-            // Only cleanup connections when component truly unmounts
-            const stream = streamRef.current;
-            if (stream) {
-                stream.getTracks().forEach(t => t.stop());
-                streamRef.current = null;
-            }
-            peersRef.current.forEach(pc => pc.close());
-            peersRef.current.clear();
-        };
-    }, []);
-
-
+    }, [isHost, roomCode, consumeProducer, onClearMedia]);
 
     return (
         <div className="shared-view-container">
             {isHost && (
                 <div className="host-controls-overlay">
                     {status === 'sharing' ? (
-                        <button type="button" className="shared-view-stop-btn" onClick={stopSharing} title="Stop Sharing">
+                        <button className="shared-view-stop-btn" onClick={stopSharing}>
                             <RefreshCw size={18} />
                             <span>Stop Sharing</span>
                         </button>
                     ) : (
                         <div className="start-share-prompt">
                             <h3>Ready to Share</h3>
-                            <button type="button" className="start-share-btn" onClick={startCapture}>
+                            <button className="start-share-btn" onClick={startCapture}>
                                 <RefreshCw size={18} />
                                 <span>{error ? 'Retry Sharing' : 'Start Screen Share'}</span>
                             </button>
@@ -635,64 +275,42 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, participant
                     ref={videoRef}
                     autoPlay
                     playsInline
-                    controls={false}
                     muted={isHost}
+                    volume={1}
                     className="shared-view-video"
                     style={{ objectFit: 'contain', backgroundColor: '#000' }}
                 />
             </div>
 
+            {status !== 'playing' && status !== 'sharing' && (
+                <div className="shared-view-status">
+                    {status === 'capturing' && "Preparing Stream..."}
+                    {status === 'connecting' && "Connecting to SFU Server..."}
+                    {status === 'waiting' && !isHost && "Ready. Waiting for Host..."}
+                </div>
+            )}
+
             {error && (
                 <div className="host-controls-overlay error-overlay">
                     <div className="start-share-prompt">
                         <p className="error-text">{error}</p>
-                        <button type="button" className="change-media-btn" onClick={onClearMedia}>
+                        <button className="change-media-btn" onClick={onClearMedia}>
                             Back to Media Selection
                         </button>
                     </div>
                 </div>
             )}
-
-            {status === 'capturing' && (
-                <div className="shared-view-status">Select a BROWSER TAB and enable "Share tab audio" for best quality</div>
-            )}
-            {status === 'waiting' && !isHost && (
-                <div className="shared-view-status">Waiting for stream... (If stuck, reload)</div>
-            )}
-            {status === 'connecting' && !isHost && (
-                <div className="shared-view-status">Connecting to live stream...</div>
-            )}
-            {status === 'stopped' && !isHost && (
-                <div className="shared-view-status">Host stopped sharing.</div>
-            )}
         </div>
     );
 });
 
-// ==========================================
-// CONTAINER COMPONENT
-// ==========================================
-// Connects to Context, passes stable data to View.
-export default function SharedViewPlayer({ media, isHost, onClearMedia }) {
-    const { room, participants } = useRoom();
-
-    // STABILITY FIX: Use a Ref to hold participants
-    // This allows us to access the LATEST participants list in callbacks (like startCapture)
-    // WITHOUT forcing the pure View component to re-render when a user joins/leaves.
-    // If the View re-renders, React *might* touch the video element (though memo helps).
-    // This is extra safety to guarantee the video tag is NEVER touched by participant updates.
-    const participantsRef = useRef(participants);
-
-    useEffect(() => {
-        participantsRef.current = participants;
-    }, [participants]);
-
+export default function SharedViewPlayer({ isHost, onClearMedia }) {
+    const { room } = useRoom();
     return (
         <SharedViewPlayerView
             isHost={isHost}
             roomCode={room?.code}
             hostId={room?.hostId}
-            participantsRef={participantsRef}
             onClearMedia={onClearMedia}
         />
     );

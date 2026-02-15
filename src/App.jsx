@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { RoomProvider } from './context/RoomContext';
+import { VoiceProvider } from './context/VoiceContext';
 import { AuthProvider } from './context/AuthContext';
 import Layout from './Layout';
 import Landing from './pages/Landing';
@@ -21,16 +22,18 @@ function App() {
       <ToastProvider>
         <AuthProvider>
           <RoomProvider>
-            <ToastContainer />
-            <Routes>
-              <Route element={<Layout />}>
-                <Route path="/" element={<Landing />} />
-                <Route path="/login" element={<Login />} />
-                <Route path="/create" element={<CreateRoom />} />
-                <Route path="/join" element={<JoinRoom />} />
-                <Route path="/room/:roomId" element={<Room />} />
-              </Route>
-            </Routes>
+            <VoiceProvider>
+              <ToastContainer />
+              <Routes>
+                <Route element={<Layout />}>
+                  <Route path="/" element={<Landing />} />
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/create" element={<CreateRoom />} />
+                  <Route path="/join" element={<JoinRoom />} />
+                  <Route path="/room/:roomId" element={<Room />} />
+                </Route>
+              </Routes>
+            </VoiceProvider>
           </RoomProvider>
         </AuthProvider>
       </ToastProvider>

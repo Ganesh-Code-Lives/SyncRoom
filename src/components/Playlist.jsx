@@ -10,7 +10,7 @@ const Playlist = ({ playlist, currentMedia, onPlay, onRemove, onVoteSkip, isHost
                 {playlist.length === 0 ? (
                     <div className="empty-playlist">
                         <p>Queue is empty.</p>
-                        <span className="sub-text">Add songs from the Media Selector!</span>
+                        <span className="sub-text">Add videos from the Media Selector!</span>
                     </div>
                 ) : (
                     playlist.map((item, index) => (

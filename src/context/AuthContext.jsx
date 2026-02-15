@@ -6,6 +6,7 @@ import {
     signOut,
     onAuthStateChanged
 } from 'firebase/auth';
+import LoadingScreen from '../components/LoadingScreen';
 
 const AuthContext = createContext();
 
@@ -64,16 +65,7 @@ export const AuthProvider = ({ children }) => {
     return (
         <AuthContext.Provider value={value}>
             {loading ? (
-                <div style={{
-                    height: '100vh',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: '#0f0f13',
-                    color: '#fff'
-                }}>
-                    Loading SyncRoom...
-                </div>
+                <LoadingScreen message="Loading SyncRoom..." />
             ) : (
                 children
             )}

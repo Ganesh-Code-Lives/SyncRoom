@@ -30,6 +30,8 @@
     border-radius: 50%;
     object-fit: cover;
     margin-right: 1rem;
+    flex-shrink: 0;
+    aspect-ratio: 1/1;
 }
 
 .member-info {
