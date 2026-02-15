@@ -171,10 +171,10 @@ class MediasoupManager {
                     announcedIp: this.announcedIp, // Use resolved IP (Env > Public > Local)
                 }
             ],
-            enableUdp: true, // Keep UDP enabled just in case
+            enableUdp: true,
             enableTcp: true,
-            preferUdp: false, // Render/Railway often block UDP
-            preferTcp: true,  // Force TCP fallback for restricted networks
+            preferUdp: true, // Railway supports UDP, so prefer it!
+            preferTcp: false,
             initialAvailableOutgoingBitrate: 1500000, // 1.5 Mbps
             minimumAvailableOutgoingBitrate: 800000,  // 800 kbps
         });

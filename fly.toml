@@ -1,0 +1,48 @@
+# fly.toml app configuration file generated for syncroom
+app = "syncroom-backend" # You will likely need to change this name when you run 'fly launch'
+primary_region = "sin" # Singapore (closest to India), change if needed
+
+[build]
+  dockerfile = "server/Dockerfile"
+
+[env]
+  PORT = "3001"
+  NODE_ENV = "production"
+  # Fly.io will need a dedicated IPv4 for UDP usually, or use IPv6
+  # We will try to rely on Fly's Anycast IP
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 3001
+  processes = ["app"]
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+# UDP Mapping for Mediasoup
+# Note: This requires a dedicated IPv4 on Fly.io ($2/mo) or using IPv6
+# Standard WebRTC Range
+[[services]]
+  protocol = "udp"
+  internal_port = 10000
+  processes = ["app"]
+  
+  # Fly.io port ranges are supported but can be tricky in toml.
+  # We map the range 10000-10100 directly.
+  # Syntax for ranges in some fly versions is specific.
+  # Safe bet: Map a smaller subset if needed, or use the range syntax.
+  
+  [[services.ports]]
+    port = "10000-10100"
+    
