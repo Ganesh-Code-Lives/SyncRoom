@@ -69,6 +69,7 @@ class MediasoupManager {
         this.nextWorkerIdx = 0;
         this.rooms = new Map(); // roomId => { router, peers: Map(socketId => { transports, producers, consumers }) }
         this.announcedIp = '127.0.0.1'; // Default
+        this.io = null; // Store IO for out-of-band notifications
     }
 
     async init() {
@@ -219,243 +220,271 @@ class MediasoupManager {
                 peer.transports.forEach(t => {
                     try { t.close(); } catch (e) { }
                 });
-                peer.producers.forEach((p, prodId) => {
-                    try {
-                        p.close();
-                        room.producers.delete(prodId);
-                    } catch (e) { }
-                });
-                peer.consumers.forEach(c => {
-                    try { c.close(); } catch (e) { }
-                });
-
-                room.peers.delete(socketId);
-                console.log(`[Mediasoup] Peer ${socketId} removed. Current producers in room: ${room.producers.size}`);
-            }
-        }
-    }
-
-    async handleSocket(socket, io) {
-        console.log(`[Mediasoup] Registering handlers for socket: ${socket.id}`);
-
-        socket.on('get_router_capabilities', async ({ roomCode }, callback) => {
-            console.log(`[Mediasoup] get_router_capabilities for room ${roomCode} from ${socket.id}`);
-            try {
-                const room = await this.getOrCreateRoom(roomCode);
-
-                // When someone requests capabilities, we also notify them of existing producers (excluding voice if needed, but for now generic)
-                const existingProducers = Array.from(room.producers.keys())
-                    .filter(id => room.producers.get(id).type !== 'voice'); // Hide voice producers from screen share flow
-
-                if (existingProducers.length > 0) {
-                    console.log(`[Mediasoup] Notifying ${socket.id} of ${existingProducers.length} existing producers in ${roomCode}`);
-                    socket.emit('existing-producers', { producerIds: existingProducers });
-                }
-
-                callback(room.router.rtpCapabilities);
-            } catch (err) {
-                console.error('[Mediasoup] get_router_capabilities error:', err);
-                callback({ error: err.message });
-            }
+                try {
+                    p.close();
+                    room.producers.delete(prodId);
+                    // Notify room so consumers can clean up
+                    if (this.io) {
+                        console.log(`[Mediasoup] Notifying room ${roomId} of producer close: ${prodId}`);
+                        this.io.to(roomId).emit('consumer_closed', { consumerId: null, producerId: prodId });
+                        // Note: Clients usually listen to 'consumer_closed' with consumerId. 
+                        // But here we need to tell them "The specific producer for your consumer is gone".
+                        // Actually, standard practice: emit 'producer_closed'
+                        this.io.to(roomId).emit('producer_closed', { producerId: prodId });
+                    }
+                } catch (e) { }
+            });
+        });
+        peer.consumers.forEach(c => {
+            try { c.close(); } catch (e) { }
         });
 
-        socket.on('mediasoup_ping', (data, cb) => {
-            console.log(`[Mediasoup] PING received from ${socket.id}`);
-            if (typeof cb === 'function') {
-                cb({ pong: true });
-            } else if (typeof data === 'function') {
-                data({ pong: true });
-            }
-        });
-
-        socket.on('create_transport', async ({ roomCode, direction }, callback) => {
-            console.log(`[Mediasoup] create_transport (${direction}) for room ${roomCode} from ${socket.id}`);
-            try {
-                const room = await this.getOrCreateRoom(roomCode);
-                const { transport, params } = await this.createWebRtcTransport(room.router);
-
-                const peer = this.getPeer(room, socket.id);
-                peer.transports.set(transport.id, transport);
-
-                transport.on('dtlsstatechange', (dtlsState) => {
-                    console.log(`[Mediasoup] Transport ${transport.id} DTLS state changed to: ${dtlsState} (Peer: ${socket.id})`);
-                    if (dtlsState === 'closed') transport.close();
-                });
-
-                callback(params);
-            } catch (err) {
-                console.error('[Mediasoup] create_transport error:', err);
-                callback({ error: err.message });
-            }
-        });
-
-        socket.on('connect_transport', async ({ roomCode, transportId, dtlsParameters }, callback) => {
-            console.log(`[Mediasoup] connect_transport ${transportId} from ${socket.id}`);
-            try {
-                const room = await this.getOrCreateRoom(roomCode);
-                const peer = this.getPeer(room, socket.id);
-                const transport = peer.transports.get(transportId);
-
-                if (transport) {
-                    await transport.connect({ dtlsParameters });
-                    callback({ success: true });
-                } else {
-                    console.error(`[Mediasoup] Transport ${transportId} not found for peer ${socket.id}`);
-                    callback({ error: 'Transport not found' });
-                }
-            } catch (err) {
-                console.error('[Mediasoup] connect_transport error:', err);
-                callback({ error: err.message });
-            }
-        });
-
-        socket.on('produce', async ({ roomCode, transportId, kind, rtpParameters, appData }, callback) => {
-            console.log(`[Mediasoup] produce request for ${kind} from ${socket.id}`);
-            try {
-                const room = await this.getOrCreateRoom(roomCode);
-                const peer = this.getPeer(room, socket.id);
-                const transport = peer.transports.get(transportId);
-
-                if (!transport) {
-                    console.error(`[Mediasoup] Produce FAIL: Transport ${transportId} not found`);
-                    return callback({ error: 'Transport not found' });
-                }
-
-                const producer = await transport.produce({ kind, rtpParameters, appData });
-                peer.producers.set(producer.id, producer);
-                room.producers.set(producer.id, {
-                    producer,
-                    socketId: socket.id,
-                    userId: socket.userId || appData?.userId,
-                    type: appData?.type || 'media'
-                });
-
-                console.log(`[Mediasoup] Producer CREATED & STORED: id=${producer.id}, kind=${producer.kind}, type=${appData?.type}, peer=${socket.id}`);
-
-                producer.on('transportclose', () => {
-                    console.log(`[Mediasoup] Producer CLOSED (transportclose): id=${producer.id}`);
-                    producer.close();
-                    peer.producers.delete(producer.id);
-                    room.producers.delete(producer.id);
-                });
-
-                // Notify other peers in the room about the new producer
-                // Separation: Voice notifications use voice-specific events if it's voice
-                if (appData?.type === 'voice') {
-                    console.log(`[Mediasoup] Notifying room ${roomCode} about new voice producer ${producer.id}`);
-                    socket.to(roomCode).emit('voice-new-producer', {
-                        producerId: producer.id,
-                        userId: socket.userId || socket.id
-                    });
-                } else {
-                    console.log(`[Mediasoup] Notifying room ${roomCode} about new media producer ${producer.id}`);
-                    socket.to(roomCode).emit('new_producer', { producerId: producer.id, kind: producer.kind });
-                }
-
-                callback({ id: producer.id });
-            } catch (err) {
-                console.error('[Mediasoup] produce error:', err);
-                callback({ error: err.message });
-            }
-        });
-
-        socket.on('consume', async ({ roomCode, transportId, producerId, rtpCapabilities }, callback) => {
-            try {
-                const room = await this.getOrCreateRoom(roomCode);
-
-                if (!room.router.canConsume({ producerId, rtpCapabilities })) {
-                    console.error(`[Mediasoup] consume FAIL: Peer ${socket.id} cannot consume producer ${producerId}`);
-                    return callback({ error: 'Cannot consume producer with provided capabilities' });
-                }
-
-                const peer = this.getPeer(room, socket.id);
-                const transport = peer.transports.get(transportId);
-                if (!transport) {
-                    console.error(`[Mediasoup] consume FAIL: Transport ${transportId} not found for peer ${socket.id}`);
-                    return callback({ error: 'Transport not found' });
-                }
-
-                const consumer = await transport.consume({
-                    producerId,
-                    rtpCapabilities,
-                    paused: true,
-                });
-
-                peer.consumers.set(consumer.id, consumer);
-                console.log(`[Mediasoup] Consumer CREATED: id=${consumer.id}, producerId=${producerId}, peer=${socket.id}`);
-
-                consumer.on('transportclose', () => {
-                    console.log(`[Mediasoup] Consumer CLOSED (transportclose): id=${consumer.id}`);
-                    consumer.close();
-                    peer.consumers.delete(consumer.id);
-                });
-
-                consumer.on('producerclose', () => {
-                    console.log(`[Mediasoup] Consumer CLOSED (producerclose): id=${consumer.id}`);
-                    consumer.close();
-                    peer.consumers.delete(consumer.id);
-                    socket.emit('consumer_closed', { consumerId: consumer.id });
-                });
-
-                const producerData = room.producers.get(producerId);
-
-                callback({
-                    id: consumer.id,
-                    producerId,
-                    kind: consumer.kind,
-                    rtpParameters: consumer.rtpParameters,
-                    appData: { userId: producerData?.userId }
-                });
-            } catch (err) {
-                console.error('[Mediasoup] consume error:', err);
-                callback({ error: err.message });
-            }
-        });
-
-        socket.on('resume_consumer', async ({ roomCode, consumerId }, callback) => {
-            try {
-                const room = await this.getOrCreateRoom(roomCode);
-                const peer = this.getPeer(room, socket.id);
-                const consumer = peer.consumers.get(consumerId);
-
-                if (consumer) {
-                    await consumer.resume();
-                    console.log(`[Mediasoup] Consumer RESUMED: id=${consumerId}`);
-                    callback({ success: true });
-                } else {
-                    callback({ error: 'Consumer not found' });
-                }
-            } catch (err) {
-                console.error('[Mediasoup] resume_consumer error:', err);
-                callback({ error: err.message });
-            }
-        });
-
-        socket.on('get_producers', async (data, callback) => {
-            if (!data) return callback({ error: 'No data provided' });
-            const { roomCode, type } = data;
-            console.log(`[Mediasoup] get_producers (type: ${type}) for room ${roomCode} from ${socket.id}`);
-            try {
-                const room = await this.getOrCreateRoom(roomCode);
-                const results = [];
-                for (const [prodId, prodData] of room.producers.entries()) {
-                    if (prodData.socketId === socket.id) continue;
-                    if (type && prodData.type !== type) continue;
-                    if (!type && prodData.type === 'voice') continue; // Default hide voice
-
-                    results.push({ producerId: prodId, kind: prodData.producer.kind, type: prodData.type });
-                }
-                callback(results);
-            } catch (err) {
-                console.error('[Mediasoup] get_producers error:', err);
-                callback({ error: err.message });
-            }
-        });
-
-        socket.on('disconnect', () => {
-            this.cleanupPeer(socket.id);
-        });
+        room.peers.delete(socketId);
+        console.log(`[Mediasoup] Peer ${socketId} removed. Current producers in room: ${room.producers.size}`);
     }
 }
+    async handleSocket(socket, io) {
+    this.io = io; // Keep reference for cleanup
+    console.log(`[Mediasoup] Registering handlers for socket: ${socket.id}`);
 
-export const mediasoupManager = new MediasoupManager();
+    socket.on('get_router_capabilities', async ({ roomCode }, callback) => {
+        console.log(`[Mediasoup] get_router_capabilities for room ${roomCode} from ${socket.id}`);
+        try {
+            const room = await this.getOrCreateRoom(roomCode);
+
+            // When someone requests capabilities, we also notify them of existing producers (excluding voice if needed, but for now generic)
+            const existingProducers = Array.from(room.producers.keys())
+                .filter(id => room.producers.get(id).type !== 'voice'); // Hide voice producers from screen share flow
+
+            if (existingProducers.length > 0) {
+                console.log(`[Mediasoup] Notifying ${socket.id} of ${existingProducers.length} existing producers in ${roomCode}`);
+                socket.emit('existing-producers', { producerIds: existingProducers });
+            }
+
+            callback(room.router.rtpCapabilities);
+        } catch (err) {
+            console.error('[Mediasoup] get_router_capabilities error:', err);
+            callback({ error: err.message });
+        }
+    });
+
+    socket.on('mediasoup_ping', (data, cb) => {
+        console.log(`[Mediasoup] PING received from ${socket.id}`);
+        if (typeof cb === 'function') {
+            cb({ pong: true });
+        } else if (typeof data === 'function') {
+            data({ pong: true });
+        }
+    });
+
+    socket.on('create_transport', async ({ roomCode, direction }, callback) => {
+        console.log(`[Mediasoup] create_transport (${direction}) for room ${roomCode} from ${socket.id}`);
+        try {
+            const room = await this.getOrCreateRoom(roomCode);
+            const { transport, params } = await this.createWebRtcTransport(room.router);
+
+            const peer = this.getPeer(room, socket.id);
+            peer.transports.set(transport.id, transport);
+
+            transport.on('dtlsstatechange', (dtlsState) => {
+                console.log(`[Mediasoup] Transport ${transport.id} DTLS state changed to: ${dtlsState} (Peer: ${socket.id})`);
+                if (dtlsState === 'closed') transport.close();
+            });
+
+            callback(params);
+        } catch (err) {
+            console.error('[Mediasoup] create_transport error:', err);
+            callback({ error: err.message });
+        }
+    });
+
+    socket.on('connect_transport', async ({ roomCode, transportId, dtlsParameters }, callback) => {
+        console.log(`[Mediasoup] connect_transport ${transportId} from ${socket.id}`);
+        try {
+            const room = await this.getOrCreateRoom(roomCode);
+            const peer = this.getPeer(room, socket.id);
+            const transport = peer.transports.get(transportId);
+
+            if (transport) {
+                await transport.connect({ dtlsParameters });
+                callback({ success: true });
+            } else {
+                console.error(`[Mediasoup] Transport ${transportId} not found for peer ${socket.id}`);
+                callback({ error: 'Transport not found' });
+            }
+        } catch (err) {
+            console.error('[Mediasoup] connect_transport error:', err);
+            callback({ error: err.message });
+        }
+    });
+
+    socket.on('produce', async ({ roomCode, transportId, kind, rtpParameters, appData }, callback) => {
+        console.log(`[Mediasoup] produce request for ${kind} from ${socket.id}`);
+        try {
+            const room = await this.getOrCreateRoom(roomCode);
+            const peer = this.getPeer(room, socket.id);
+            const transport = peer.transports.get(transportId);
+
+            if (!transport) {
+                console.error(`[Mediasoup] Produce FAIL: Transport ${transportId} not found`);
+                return callback({ error: 'Transport not found' });
+            }
+
+            const producer = await transport.produce({ kind, rtpParameters, appData });
+            peer.producers.set(producer.id, producer);
+            room.producers.set(producer.id, {
+                producer,
+                socketId: socket.id,
+                userId: socket.userId || appData?.userId,
+                type: appData?.type || 'media'
+            });
+
+            console.log(`[Mediasoup] Producer CREATED & STORED: id=${producer.id}, kind=${producer.kind}, type=${appData?.type}, peer=${socket.id}`);
+
+            producer.on('transportclose', () => {
+                console.log(`[Mediasoup] Producer CLOSED (transportclose): id=${producer.id}`);
+                producer.close();
+                peer.producers.delete(producer.id);
+                room.producers.delete(producer.id);
+            });
+
+            // Notify other peers in the room about the new producer
+            // Separation: Voice notifications use voice-specific events if it's voice
+            if (appData?.type === 'voice') {
+                console.log(`[Mediasoup] Notifying room ${roomCode} about new voice producer ${producer.id}`);
+                socket.to(roomCode).emit('voice-new-producer', {
+                    producerId: producer.id,
+                    userId: socket.userId || socket.id
+                });
+            } else {
+                console.log(`[Mediasoup] Notifying room ${roomCode} about new media producer ${producer.id}`);
+                socket.to(roomCode).emit('new_producer', { producerId: producer.id, kind: producer.kind });
+            }
+
+            callback({ id: producer.id });
+        } catch (err) {
+            console.error('[Mediasoup] produce error:', err);
+            callback({ error: err.message });
+        }
+    });
+
+    socket.on('consume', async ({ roomCode, transportId, producerId, rtpCapabilities }, callback) => {
+        try {
+            const room = await this.getOrCreateRoom(roomCode);
+
+            if (!room.router.canConsume({ producerId, rtpCapabilities })) {
+                console.error(`[Mediasoup] consume FAIL: Peer ${socket.id} cannot consume producer ${producerId}`);
+                return callback({ error: 'Cannot consume producer with provided capabilities' });
+            }
+
+            const peer = this.getPeer(room, socket.id);
+            const transport = peer.transports.get(transportId);
+            if (!transport) {
+                console.error(`[Mediasoup] consume FAIL: Transport ${transportId} not found for peer ${socket.id}`);
+                return callback({ error: 'Transport not found' });
+            }
+
+            const consumer = await transport.consume({
+                producerId,
+                rtpCapabilities,
+                paused: true,
+            });
+
+            peer.consumers.set(consumer.id, consumer);
+            console.log(`[Mediasoup] Consumer CREATED: id=${consumer.id}, producerId=${producerId}, peer=${socket.id}`);
+
+            consumer.on('transportclose', () => {
+                console.log(`[Mediasoup] Consumer CLOSED (transportclose): id=${consumer.id}`);
+                consumer.close();
+                peer.consumers.delete(consumer.id);
+            });
+
+            consumer.on('producerclose', () => {
+                console.log(`[Mediasoup] Consumer CLOSED (producerclose): id=${consumer.id}`);
+                consumer.close();
+                peer.consumers.delete(consumer.id);
+                socket.emit('consumer_closed', { consumerId: consumer.id });
+            });
+
+            const producerData = room.producers.get(producerId);
+
+            callback({
+                id: consumer.id,
+                producerId,
+                kind: consumer.kind,
+                rtpParameters: consumer.rtpParameters,
+                appData: { userId: producerData?.userId }
+            });
+        } catch (err) {
+            console.error('[Mediasoup] consume error:', err);
+            callback({ error: err.message });
+        }
+    });
+
+    socket.on('resume_consumer', async ({ roomCode, consumerId }, callback) => {
+        try {
+            const room = await this.getOrCreateRoom(roomCode);
+            const peer = this.getPeer(room, socket.id);
+            const consumer = peer.consumers.get(consumerId);
+
+            if (consumer) {
+                await consumer.resume();
+                console.log(`[Mediasoup] Consumer RESUMED: id=${consumerId}`);
+                callback({ success: true });
+            } else {
+                callback({ error: 'Consumer not found' });
+            }
+        } catch (err) {
+            console.error('[Mediasoup] resume_consumer error:', err);
+            callback({ error: err.message });
+        }
+    });
+
+    socket.on('get_producers', async (data, callback) => {
+        if (!data) return callback({ error: 'No data provided' });
+        const { roomCode, type } = data;
+        console.log(`[Mediasoup] get_producers (type: ${type}) for room ${roomCode} from ${socket.id}`);
+        try {
+            const room = await this.getOrCreateRoom(roomCode);
+            const results = [];
+            for (const [prodId, prodData] of room.producers.entries()) {
+                if (prodData.socketId === socket.id) continue;
+                if (type && prodData.type !== type) continue;
+                if (!type && prodData.type === 'voice') continue; // Default hide voice
+
+                results.push({ producerId: prodId, kind: prodData.producer.kind, type: prodData.type });
+            }
+            callback(results);
+        } catch (err) {
+            console.error('[Mediasoup] get_producers error:', err);
+            callback({ error: err.message });
+        }
+    });
+
+    async handleSocket(socket, io) {
+        this.io = io; // Keep reference for cleanup
+        console.log(`[Mediasoup] Registering handlers for socket: ${socket.id}`);
+
+        // ... (rest of handleSocket methods - we need to make sure we don't duplicate or delete wrong lines)
+        // Actually, the previous VIEW showed handleSocket was outside the class?
+        // Line 245 closed the class. Line 247 started handleSocket.
+        // I need to REMOVE the closing brace at line 245, and ensure handleSocket is inside.
+        // AND ensure the closing brace at 468 is correct.
+
+        // This is a large replace. Let's do it in chunks.
+        // First, remove the closing brace at 245 and the start of handleSocket at 247.
+    }
+}
+// Wait, I can't do logic in replacement content.
+// The file view shows:
+// 245: }
+// 246:
+// 247:     async handleSocket(socket, io) {
+// ...
+// 467: }
+// 468: }
+//
+// I need to join them.
+// And I need to add the cleanup logic in cleanupPeer (which is above).
+// Let's first Fix the Class integrity.
+

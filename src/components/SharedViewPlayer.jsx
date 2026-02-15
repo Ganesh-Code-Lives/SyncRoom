@@ -256,10 +256,18 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
             onClearMedia?.();
         };
 
+        const onDisconnect = () => {
+            console.log("[SFU] Socket disconnected - Stopping share state");
+            if (isHost && status === 'sharing') {
+                stopSharing();
+            }
+        };
+
         socket.on('existing-producers', onExistingProducers);
         socket.on('new_producer', onNewProducer);
         socket.on('consumer_closed', onConsumerClosed);
         socket.on('screen_share_stopped', onStopped);
+        socket.on('disconnect', onDisconnect);
 
         initSfu();
 
@@ -268,6 +276,7 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
             socket.off('new_producer', onNewProducer);
             socket.off('consumer_closed', onConsumerClosed);
             socket.off('screen_share_stopped', onStopped);
+            socket.off('disconnect', onDisconnect);
             sfuClient.close();
         };
     }, [isHost, roomCode, consumeProducer, onClearMedia]);
