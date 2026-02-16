@@ -83,13 +83,15 @@ class MediasoupManager {
         for (let i = 0; i < numWorkers; i++) {
             console.log(`[Mediasoup] Spawning worker ${i + 1}/${numWorkers}...`);
             const worker = await mediasoup.createWorker({
-                rtcMinPort: 10000,
-                rtcMaxPort: 10100,
+                rtcMinPort: 40000,
+                rtcMaxPort: 40100,
+                logLevel: 'warn',
+                logTags: ['ice', 'dtls', 'rtp', 'srtp']
             });
 
             worker.on('died', () => {
-                console.error('mediasoup worker died, exiting in 2 seconds... [pid:%d]', worker.pid);
-                setTimeout(() => process.exit(1), 2000);
+                console.error('mediasoup worker died, exiting... [pid:%d]', worker.pid);
+                process.exit(1);
             });
 
             this.workers.push(worker);
@@ -168,15 +170,19 @@ class MediasoupManager {
             listenIps: [
                 {
                     ip: '0.0.0.0',
-                    announcedIp: this.announcedIp, // Use resolved IP (Env > Public > Local)
+                    announcedIp: this.announcedIp,
                 }
             ],
             enableUdp: true,
             enableTcp: true,
-            preferUdp: true, // Railway supports UDP, so prefer it!
-            preferTcp: false,
-            initialAvailableOutgoingBitrate: 1500000, // 1.5 Mbps
-            minimumAvailableOutgoingBitrate: 800000,  // 800 kbps
+            preferUdp: true,
+            initialAvailableOutgoingBitrate: 1000000,
+        });
+
+        await transport.setMaxIncomingBitrate(2500000);
+
+        transport.on('icestatechange', (state) => {
+            console.log(`[Mediasoup] Transport ${transport.id} ICE state changed to: ${state}`);
         });
 
         // Add additional debug logs or handling if needed
@@ -239,7 +245,6 @@ class MediasoupManager {
                 console.log(`[Mediasoup] Peer ${socketId} removed. Current producers in room: ${room.producers.size}`);
             }
         }
-
     }
 
     async handleSocket(socket, io) {
@@ -250,16 +255,6 @@ class MediasoupManager {
             console.log(`[Mediasoup] get_router_capabilities for room ${roomCode} from ${socket.id}`);
             try {
                 const room = await this.getOrCreateRoom(roomCode);
-
-                // When someone requests capabilities, we also notify them of existing producers (excluding voice if needed, but for now generic)
-                const existingProducers = Array.from(room.producers.keys())
-                    .filter(id => room.producers.get(id).type !== 'voice'); // Hide voice producers from screen share flow
-
-                if (existingProducers.length > 0) {
-                    console.log(`[Mediasoup] Notifying ${socket.id} of ${existingProducers.length} existing producers in ${roomCode}`);
-                    socket.emit('existing-producers', { producerIds: existingProducers });
-                }
-
                 callback(room.router.rtpCapabilities);
             } catch (err) {
                 console.error('[Mediasoup] get_router_capabilities error:', err);

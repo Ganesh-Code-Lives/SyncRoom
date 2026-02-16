@@ -35,7 +35,7 @@ primary_region = "sin" # Singapore (closest to India), change if needed
 # Standard WebRTC Range
 [[services]]
   protocol = "udp"
-  internal_port = 10000
+  internal_port = 40000
   processes = ["app"]
   
   # Fly.io port ranges are supported but can be tricky in toml.
@@ -44,5 +44,5 @@ primary_region = "sin" # Singapore (closest to India), change if needed
   # Safe bet: Map a smaller subset if needed, or use the range syntax.
   
   [[services.ports]]
-    port = "10000-10100"
+    port = "40000-49999"
     

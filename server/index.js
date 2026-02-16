@@ -4,6 +4,8 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { mediasoupManager } from './mediasoupManager.js';
 
+process.setMaxListeners(100);
+
 const app = express();
 app.use(cors());
 
@@ -244,12 +246,8 @@ io.on('connection', (socket) => {
 
         // WEBRTC FIX: Trigger Renegotiation if Sharing is Active
         if (room.isSharing && room.activeSharerId && room.activeSharerId !== socket.id) {
-            console.log(`[WebRTC] Notify Host (${room.activeSharerId}) to share with new peer (${socket.id})`);
-            // We need the Host's SOCKET ID, not their UserId.
-            // room.activeSharerId stores the socket.id from screen_share_start
-            io.to(room.activeSharerId).emit('new_peer_for_sharing', {
-                socketId: socket.id
-            });
+            console.log(`[WebRTC] Notify Host (${room.activeSharerId}) about new joiner (${socket.id})`);
+            // Note: In SFU mode, this is just for awareness; consumption is triggered by 'get_producers'
         }
     });
 
@@ -698,29 +696,6 @@ io.on('connection', (socket) => {
         });
     });
 
-    socket.on('screen_share_ready', (data) => {
-        const { roomCode } = data;
-        const room = rooms.get(roomCode);
-        if (!room) return;
-        const hostUser = room.users.find(u => u.oderId === room.hostId);
-        if (!hostUser) return;
-        io.to(hostUser.id).emit('screen_share_request_offer', { memberSocketId: socket.id });
-    });
-
-    socket.on('screen_share_offer', (data) => {
-        const { to, offer } = data;
-        io.to(to).emit('screen_share_offer', { from: socket.id, offer });
-    });
-
-    socket.on('screen_share_answer', (data) => {
-        const { to, answer } = data;
-        io.to(to).emit('screen_share_answer', { from: socket.id, answer });
-    });
-
-    socket.on('screen_share_ice', (data) => {
-        const { to, candidate } = data;
-        io.to(to).emit('screen_share_ice', { from: socket.id, candidate });
-    });
 
     socket.on('screen_share_stop', (data) => {
         const { roomCode } = data;
@@ -897,16 +872,8 @@ function handleUserLeave(socket) {
         }, 30000); // 30 seconds grace period
     }
 
-    // Clean up Mediasoup peer state for this specific user
-    const msRoom = mediasoupManager.rooms.get(roomCode);
-    if (msRoom && msRoom.peers.has(socket.id)) {
-        const peer = msRoom.peers.get(socket.id);
-        peer.transports.forEach(t => t.close());
-        peer.producers.forEach(p => p.close());
-        peer.consumers.forEach(c => c.close());
-        msRoom.peers.delete(socket.id);
-        console.log(`[Mediasoup] Cleaned up peer state for ${socket.id}`);
-    }
+    // Clean up Mediasoup peer state
+    mediasoupManager.cleanupPeer(socket.id);
 
     socket.leave(roomCode);
 }

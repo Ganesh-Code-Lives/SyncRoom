@@ -364,7 +364,6 @@ export const RoomProvider = ({ children }) => {
             socket.off('message_updated', handleMessageUpdated);
             socket.off('message_deleted', handleMessageDeleted);
             socket.off('server_heartbeat', handleServerHeartbeat);
-            socket.disconnect();
         };
     }, [navigate, getUserInfo, user, isRoomLoaded]); // Removed showError, showInfo, showSuccess - they're stable from ToastContext
 
@@ -488,9 +487,10 @@ export const RoomProvider = ({ children }) => {
         setCurrentMedia(null);
         setPlayback({ isPlaying: false, currentTime: 0, duration: 0 });
         setIsHost(false);
-        sfuVoiceClient.close(); // Clean up voice on exit
+        sfuVoiceClient.terminate(); // Clean up voice on exit
+        sfuClient.terminate(); // Clean up screen share client on exit
         navigate('/');
-    }, [navigate]);
+    }, [navigate, socket, room?.code]);
 
     // ============================================
     // CHAT

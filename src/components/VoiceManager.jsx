@@ -8,6 +8,7 @@ import { useToast } from '../context/ToastContext';
 const VoiceManager = () => {
     const { room, currentUser } = useRoom();
     const {
+        voiceParticipants,
         setVoiceParticipants,
         voiceTrigger,
         setVoiceTrigger,
@@ -36,6 +37,59 @@ const VoiceManager = () => {
     const VAD_HANGOVER_TIME = 1500; // 1.5s of silence before cutting off
 
     // Ensure AudioContext is active (Browser Autoplay Policy Check)
+    const removeAudio = useCallback((producerId) => {
+        const audio = audioElementsRef.current.get(producerId);
+        if (audio) {
+            audio.pause();
+            audio.srcObject = null;
+            if (audio.parentNode) audio.parentNode.removeChild(audio);
+            audioElementsRef.current.delete(producerId);
+        }
+        consumersRef.current.delete(producerId);
+    }, []);
+
+    const consumeProducer = useCallback(async (producerId) => {
+        if (consumersRef.current.has(producerId)) return;
+
+        try {
+            console.log(`[VoiceManager] 🔊 Consuming Remote [${producerId}]`);
+            const consumer = await sfuVoiceClient.consume(producerId);
+            consumersRef.current.set(producerId, consumer);
+
+            const stream = new MediaStream([consumer.track]);
+
+            // Phase 3/7: Clean individual audio handles
+            const audio = document.createElement('audio');
+            audio.id = `audio-p-${producerId}`;
+            audio.srcObject = stream;
+            audio.autoplay = true;
+            audio.playsInline = true;
+
+            const producerUserId = consumer.appData?.userId;
+            if (producerUserId) {
+                audio.volume = userVolumes[producerUserId] ?? 1.0;
+            }
+
+            audio.muted = isDeafened;
+
+            if (audioPoolRef.current) {
+                audioPoolRef.current.appendChild(audio);
+            }
+
+            audioElementsRef.current.set(producerId, audio);
+
+            // Force play handle
+            audio.play().catch(e => {
+                console.warn("[VoiceManager] Autoplay blocked peer stream.");
+            });
+
+            consumer.on('transportclose', () => removeAudio(producerId));
+            consumer.on('producerclose', () => removeAudio(producerId));
+        } catch (err) {
+            console.error(`[VoiceManager] Fail Consume ${producerId}:`, err);
+        }
+    }, [isDeafened, userVolumes, removeAudio]);
+
     const resumeAudioContext = useCallback(async () => {
         try {
             if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
@@ -47,10 +101,22 @@ const VoiceManager = () => {
         }
     }, []);
 
+    const fetchProducers = useCallback(() => {
+        console.log("[VoiceManager] Requesting existing producers...");
+        socket.emit('get_producers', { roomCode: room?.code, type: 'voice' }, (producers) => {
+            if (Array.isArray(producers)) {
+                console.log(`[VoiceManager] Fetched ${producers.length} voice producers`);
+                producers.forEach(p => consumeProducer(p.producerId));
+            }
+        });
+    }, [room?.code, consumeProducer]);
+
     // Phase 3 & 4 & 5 & 6 Integration
     const joinVoiceChannel = useCallback(async () => {
         if (!room || !currentUser) return;
         if (isJoined) return;
+
+        let cancelled = false;
 
         try {
             info("Connecting to pro-audio...");
@@ -71,14 +137,16 @@ const VoiceManager = () => {
                     latency: { ideal: 0.01 },
                     // Phase 4: Google Chrome Advanced Suppression Enforcements
                     googEchoCancellation: { ideal: isEchoOn },
-                    googEchoCancellation2: { ideal: isEchoOn },
-                    googDAEchoCancellation: { ideal: isEchoOn },
-                    googAutoGainControl: { ideal: true },
                     googNoiseSuppression: { ideal: isNoiseOn },
                     googHighpassFilter: { ideal: true }
                 },
                 video: false
             });
+
+            if (cancelled) {
+                stream.getTracks().forEach(t => t.stop());
+                return;
+            }
 
             const audioTrack = stream.getAudioTracks()[0];
 
@@ -95,8 +163,13 @@ const VoiceManager = () => {
             localStreamRef.current = stream;
             audioTrack.enabled = !isMuted;
 
+            if (!socket.connected) {
+                throw new Error("Socket disconnected. Please wait for reconnection.");
+            }
+
             console.log("[VoiceManager] 🌐 Connecting to MediaSoup SFU...");
             await sfuVoiceClient.init(room.code, currentUser.oderId);
+            if (cancelled) return;
 
             // Phase 7: Opus, Mono, DTX enforced at Client Level
             const { producerId } = await sfuVoiceClient.joinVoice({
@@ -104,17 +177,24 @@ const VoiceManager = () => {
                 echoCancellation: isEchoOn
             });
 
+            if (cancelled) return;
+
             console.log("[VoiceManager] ✅ Connected with Producer:", producerId);
 
             setupProcessing(stream);
             setIsJoined(true);
             showSuccess("Pro-Voice Active");
         } catch (err) {
+            if (cancelled) return;
             console.error("[VoiceManager] ❌ Voice Join Failed:", err);
-            showError("Voice Connection Failed: " + (err.message || "Unknown error"));
+            showError("Voice Connection Failed: " + (err.message || err));
             setIsJoined(false);
             setVoiceTrigger(null);
         }
+
+        return () => {
+            cancelled = true;
+        };
     }, [room, currentUser, isJoined, info, showSuccess, showError, setVoiceTrigger, isNoiseOn, isEchoOn, isMuted]);
 
     const leaveVoiceChannel = useCallback(async () => {
@@ -201,58 +281,6 @@ const VoiceManager = () => {
         }
     };
 
-    const consumeProducer = useCallback(async (producerId) => {
-        if (consumersRef.current.has(producerId)) return;
-
-        try {
-            console.log(`[VoiceManager] 🔊 Consuming Remote [${producerId}]`);
-            const consumer = await sfuVoiceClient.consume(producerId);
-            consumersRef.current.set(producerId, consumer);
-
-            const stream = new MediaStream([consumer.track]);
-
-            // Phase 3/7: Clean individual audio handles
-            const audio = document.createElement('audio');
-            audio.id = `audio-p-${producerId}`;
-            audio.srcObject = stream;
-            audio.autoplay = true;
-            audio.playsInline = true;
-
-            const producerUserId = consumer.appData?.userId;
-            if (producerUserId) {
-                audio.volume = userVolumes[producerUserId] ?? 1.0;
-            }
-
-            audio.muted = isDeafened;
-
-            if (audioPoolRef.current) {
-                audioPoolRef.current.appendChild(audio);
-            }
-
-            audioElementsRef.current.set(producerId, audio);
-
-            // Force play handle
-            audio.play().catch(e => {
-                console.warn("[VoiceManager] Autoplay blocked peer stream.");
-            });
-
-            consumer.on('transportclose', () => removeAudio(producerId));
-            consumer.on('producerclose', () => removeAudio(producerId));
-        } catch (err) {
-            console.error(`[VoiceManager] Fail Consume ${producerId}:`, err);
-        }
-    }, [isDeafened, userVolumes]);
-
-    const removeAudio = (producerId) => {
-        const audio = audioElementsRef.current.get(producerId);
-        if (audio) {
-            audio.pause();
-            audio.srcObject = null;
-            if (audio.parentNode) audio.parentNode.removeChild(audio);
-            audioElementsRef.current.delete(producerId);
-        }
-        consumersRef.current.delete(producerId);
-    };
 
     // EFFECTS
 
@@ -272,6 +300,25 @@ const VoiceManager = () => {
         });
         console.log(`[VoiceManager] Speaker Output -> ${!isDeafened ? 'ON' : 'OFF'}`);
     }, [isDeafened]);
+
+    // Singleton State Sync for Re-renders
+    useEffect(() => {
+        // If singleton is already loaded and we are in the participants list, 
+        // we should resume local processing of the existing stream.
+        if (!isJoined && sfuVoiceClient.loaded && room && currentUser) {
+            const amIInVoice = voiceParticipants.some(p => p.oderId === currentUser.oderId);
+            if (amIInVoice) {
+                console.log("[VoiceManager] Singleton active and user joined, syncing local state...");
+                setIsJoined(true);
+                if (sfuVoiceClient.audioStream) {
+                    console.log("[VoiceManager] Resuming local VAD processing for existing stream");
+                    setupProcessing(sfuVoiceClient.audioStream);
+                    localStreamRef.current = sfuVoiceClient.audioStream;
+                }
+                fetchProducers();
+            }
+        }
+    }, [room, currentUser, voiceParticipants, isJoined, setupProcessing]);
 
     // Phase 5: REAL Track Recreation on Toggle
     useEffect(() => {
@@ -354,12 +401,37 @@ const VoiceManager = () => {
         };
         const onUsers = (users) => setVoiceParticipants(users);
 
+        const onReconnect = async () => {
+            if (!room) return;
+            console.log("[VoiceManager] Socket reconnected, re-syncing voice SFU...");
+            try {
+                await sfuVoiceClient.terminate();
+                await sfuVoiceClient.init(room.code, currentUser?.oderId);
+
+                if (localStreamRef.current) {
+                    const track = localStreamRef.current.getAudioTracks()[0];
+                    if (track) await sfuVoiceClient.joinVoice(track);
+                }
+
+                socket.emit('get_producers', { roomCode: room.code, type: 'voice' }, (producers) => {
+                    if (Array.isArray(producers)) {
+                        producers.forEach(p => consumeProducer(p.producerId));
+                    }
+                });
+            } catch (e) {
+                console.error("[VoiceManager] Voice recovery failed:", e);
+            }
+        };
+
         socket.on('voice-new-producer', onNewProducer);
         socket.on('voice_users_update', onUsers);
         socket.on('user-speaking-update', onSpeaking);
+        socket.on('connect', onReconnect);
 
         socket.emit('get_producers', { roomCode: room.code, type: 'voice' }, (producers) => {
-            if (Array.isArray(producers)) producers.forEach(p => consumeProducer(p.producerId));
+            if (Array.isArray(producers)) {
+                producers.forEach(p => consumeProducer(p.producerId));
+            }
         });
 
         const winHandle = () => resumeAudioContext();
@@ -369,6 +441,7 @@ const VoiceManager = () => {
             socket.off('voice-new-producer', onNewProducer);
             socket.off('voice_users_update', onUsers);
             socket.off('user-speaking-update', onSpeaking);
+            socket.off('connect', onReconnect);
             window.removeEventListener('click', winHandle);
         };
     }, [room, consumeProducer, setVoiceParticipants, resumeAudioContext]);

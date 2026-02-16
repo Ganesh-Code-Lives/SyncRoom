@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { RefreshCw } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useRoom } from '../context/RoomContext';
 import { socket } from '../lib/socket';
 import { sfuClient } from '../lib/sfuClient';
 import './SharedViewPlayer.css';
 
 const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedia }) => {
+    const { currentUser } = useRoom();
     const videoRef = useRef(null);
+    const localStreamRef = useRef(null);
     const [status, setStatus] = useState(isHost ? 'idle' : 'waiting');
     const [error, setError] = useState(null);
     const activeConsumersRef = useRef(new Set());
@@ -17,7 +20,11 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
     }, [status]);
 
     const stopSharing = useCallback(() => {
-        sfuClient.close();
+        sfuClient.terminate();
+        if (localStreamRef.current) {
+            localStreamRef.current.getTracks().forEach(t => t.stop());
+            localStreamRef.current = null;
+        }
         if (roomCode) {
             socket.emit('screen_share_stop', { roomCode });
         }
@@ -35,25 +42,22 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
             setStatus('capturing');
 
             console.log("[SFU] Host initializing sfuClient...");
-            await sfuClient.init(roomCode);
+            await sfuClient.init(roomCode, currentUser?.oderId);
             console.log("[SFU] Host sfuClient init OK");
 
             const stream = await navigator.mediaDevices.getDisplayMedia({
                 video: {
-                    width: { max: 1920, ideal: 1920 },
-                    height: { max: 1080, ideal: 1080 },
-                    frameRate: { max: 30, ideal: 30 }
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                    frameRate: { ideal: 30, max: 30 }
                 },
                 audio: {
                     echoCancellation: false,
                     noiseSuppression: false,
-                    autoGainControl: false,
-                    channelCount: 2,
-                    sampleRate: 48000,
-                    sampleSize: 16,
-                    latency: 0
+                    autoGainControl: false
                 }
             });
+            localStreamRef.current = stream;
 
             console.log("[SFU] Stream acquired");
 
@@ -106,34 +110,15 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
                 stopSharing();
             };
 
-            if (videoRef.current) {
+            if (videoRef.current && videoRef.current.srcObject !== stream) {
                 videoRef.current.srcObject = stream;
+                videoRef.current.play().catch(e => console.warn("[SFU] Video play failed:", e));
             }
 
             console.log("[SFU] Producing tracks...");
             for (const track of stream.getTracks()) {
                 console.log(`[SFU] Producing ${track.kind} track...`);
-                const producer = await sfuClient.produce(track);
-
-                if (producer.rtpSender) {
-                    try {
-                        const params = producer.rtpSender.getParameters();
-                        if (!params.encodings) params.encodings = [{}];
-
-                        if (track.kind === 'video') {
-                            params.encodings[0].maxBitrate = 2000000; // 2Mbps
-                            console.log("[SFU] Video bitrate capped at 2Mbps");
-                        } else if (track.kind === 'audio') {
-                            params.encodings[0].maxBitrate = 128000; // 128kbps Opus
-                            params.encodings[0].priority = 'high';
-                            console.log("[SFU] Audio bitrate set to 128kbps (High Priority)");
-                        }
-
-                        await producer.rtpSender.setParameters(params);
-                    } catch (e) {
-                        console.warn(`[SFU] Failed to set bitrate for ${track.kind}:`, e);
-                    }
-                }
+                await sfuClient.produce(track);
             }
             console.log("[SFU] All tracks produced");
 
@@ -146,7 +131,7 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
             }
             setStatus('idle');
         }
-    }, [isHost, roomCode, hostId, stopSharing, status]);
+    }, [isHost, roomCode, hostId, stopSharing, currentUser?.oderId]);
 
     const consumeProducer = useCallback(async (producerId) => {
         if (activeConsumersRef.current.has(producerId)) return;
@@ -155,27 +140,32 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
         try {
             console.log(`[SFU] Consuming producer: ${producerId}`);
             const consumer = await sfuClient.consume(producerId);
+            const { track } = consumer;
 
-            if (consumer.kind === 'video') {
-                console.log(`[SFU] Attaching video track: ${consumer.track.id}`);
-                const stream = new MediaStream([consumer.track]);
-                if (videoRef.current) {
+            if (videoRef.current) {
+                // Ensure a stable MediaStream exists
+                let stream = videoRef.current.srcObject;
+                if (!stream || !(stream instanceof MediaStream)) {
+                    stream = new MediaStream([track]);
                     videoRef.current.srcObject = stream;
-                    try {
-                        await videoRef.current.play();
-                        console.log("[SFU] Video playback started successfully");
-                        setStatus('playing');
-                    } catch (playErr) {
-                        console.error("[SFU] Video play failed:", playErr);
-                        setStatus('playing');
+                } else {
+                    // Add the track if not already present
+                    if (!stream.getTracks().find(t => t.id === track.id)) {
+                        console.log(`[SFU] Adding ${track.kind} track: ${track.id}`);
+                        stream.addTrack(track);
+
+                        // RE-ASSIGN srcObject to trigger browser media pipeline refresh
+                        // This is a known fix for tracks added to an existing stream not rendering
+                        videoRef.current.srcObject = stream;
                     }
                 }
-            } else if (consumer.kind === 'audio') {
-                console.log(`[SFU] Attaching audio track: ${consumer.track.id}`);
-                if (videoRef.current && videoRef.current.srcObject) {
-                    videoRef.current.srcObject.addTrack(consumer.track);
-                } else if (videoRef.current) {
-                    videoRef.current.srcObject = new MediaStream([consumer.track]);
+
+                if (track.kind === 'video') {
+                    videoRef.current.play().catch(e => {
+                        console.warn("[SFU] Autoplay blocked, interaction required:", e);
+                        setStatus('autoplay-blocked');
+                    });
+                    setStatus('playing');
                 }
             }
         } catch (err) {
@@ -187,68 +177,68 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
     useEffect(() => {
         if (isHost || !roomCode) return;
 
+        let cancelled = false;
+
+        const fetchProducers = () => {
+            console.log("[SFU] Requesting existing producers...");
+            socket.emit('get_producers', { roomCode, type: 'media' }, (producers) => {
+                if (cancelled) return;
+                if (Array.isArray(producers)) {
+                    console.log(`[SFU] Fetched ${producers.length} existing producers`);
+                    producers.forEach(p => consumeProducer(p.producerId));
+                }
+            });
+        };
+
         const initSfu = async () => {
-            let connectionTimeout;
+            if (!socket.connected || cancelled) {
+                console.log("[SFU] Socket not connected or component unmounted, skipping init...");
+                return;
+            }
+
             try {
                 console.log("[SFU] Member joining room: " + roomCode);
                 setStatus('connecting');
 
-                // Set a 15s timeout for initial connection
-                connectionTimeout = setTimeout(() => {
-                    if (statusRef.current === 'connecting') {
-                        console.error("[SFU] Connection timeout - no producers or init failed");
-                        setError("Connection timed out. heavy traffic or firewall issue.");
-                        setStatus('idle');
-                    }
-                }, 15000);
+                await sfuClient.init(roomCode, currentUser?.oderId);
+                if (cancelled) return;
 
-                await sfuClient.init(roomCode);
-                console.log("[SFU] sfuClient init finished, waiting for producers...");
+                console.log("[SFU] sfuClient init finished, fetching producers...");
+                fetchProducers();
 
-                // Clear timeout if we successfully initialized (waiting for producers is a separate state)
-                // actually, we stay in 'connecting' until producers arrive? 
-                // No, let's keep the timeout running until we actually get a producer OR 
-                // we switch to 'waiting' state.
-
-                // If we are still connecting after init, we are just waiting for the first producer
-                // The 4s timeout below is for "switching to waiting if empty", 
-                // but the 15s timeout is a "hard fail" if nothing happens at all.
-
+                // Fallback to 'waiting' if no producers arrive within 5s
                 setTimeout(() => {
-                    if (statusRef.current === 'connecting' && activeConsumersRef.current.size === 0) {
-                        console.log("[SFU] No producers arrived yet, setting to waiting");
+                    if (!cancelled && statusRef.current === 'connecting' && activeConsumersRef.current.size === 0) {
+                        console.log("[SFU] No producers found, setting to waiting");
                         setStatus('waiting');
-                        clearTimeout(connectionTimeout); // We are safe, just waiting
                     }
-                }, 4000);
+                }, 5000);
             } catch (err) {
+                if (cancelled) return;
                 console.error("[SFU] Member Init failed:", err);
-                setError("Connection connection failed. " + (err.message || err));
+                setError("Media initialization failed. " + (err.message || err));
                 setStatus('idle');
-            } finally {
-                // If we reached here without erroring out, we might still be 'connecting'
-                // The timeout inside the try block handles the hang.
             }
         };
 
-        const onExistingProducers = async ({ producerIds }) => {
-            console.log(`[SFU] Existing producers detected: ${producerIds.length}`);
-            for (const id of producerIds) {
-                await consumeProducer(id);
-            }
-        };
+        // No-op for existing-producers as we use the get_producers callback now
+        const onExistingProducers = () => { };
 
         const onNewProducer = ({ producerId }) => {
+            if (cancelled) return;
             console.log(`[SFU] New producer: ${producerId}`);
-            consumeProducer(producerId);
+            consumeProducer(producerId); // Local consumeProducer handles the logic
         };
 
         const onConsumerClosed = ({ consumerId }) => {
-            console.log(`[SFU] Consumer closed: ${consumerId}`);
-            if (activeConsumersRef.current.size === 0) setStatus('waiting');
+            if (statusRef.current === 'sharing' && activeConsumersRef.current.size === 0) {
+                console.log(`[SFU] Last consumer closed: ${consumerId}, waiting for new producers...`);
+                setStatus('waiting');
+            }
         };
 
         const onStopped = () => {
+            if (cancelled) return;
             console.log("[SFU] Host stopped sharing");
             setStatus('stopped');
             if (videoRef.current) videoRef.current.srcObject = null;
@@ -256,10 +246,25 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
             onClearMedia?.();
         };
 
-        const onDisconnect = () => {
-            console.log("[SFU] Socket disconnected - Stopping share state");
-            if (isHost && status === 'sharing') {
-                stopSharing();
+        const onReconnect = async () => {
+            if (isHost && localStreamRef.current) {
+                console.log("[SFU] Host recovering screen share after reconnect...");
+                try {
+                    await sfuClient.terminate();
+                    await sfuClient.init(roomCode);
+                    for (const track of localStreamRef.current.getTracks()) {
+                        await sfuClient.produce(track);
+                    }
+                    setStatus('sharing');
+                } catch (e) {
+                    console.error("[SFU] Host recovery failed:", e);
+                    setStatus('idle');
+                }
+            } else if (!isHost) {
+                console.log("[SFU] Viewer recovering session after reconnect...");
+                // Reset activeConsumers so we can re-consume on fresh init
+                activeConsumersRef.current.clear();
+                initSfu();
             }
         };
 
@@ -267,19 +272,19 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
         socket.on('new_producer', onNewProducer);
         socket.on('consumer_closed', onConsumerClosed);
         socket.on('screen_share_stopped', onStopped);
-        socket.on('disconnect', onDisconnect);
+        socket.on('connect', onReconnect);
 
         initSfu();
 
         return () => {
+            console.log("[SFU] SharedViewPlayer effect cleanup - removing listeners only");
             socket.off('existing-producers', onExistingProducers);
             socket.off('new_producer', onNewProducer);
             socket.off('consumer_closed', onConsumerClosed);
             socket.off('screen_share_stopped', onStopped);
-            socket.off('disconnect', onDisconnect);
-            sfuClient.close();
+            socket.off('connect', onReconnect);
         };
-    }, [isHost, roomCode, consumeProducer, onClearMedia]);
+    }, [isHost, roomCode]); // Removed socket.connected to survive flickers
 
     return (
         <div className="shared-view-container">
@@ -314,7 +319,32 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
                 />
             </div>
 
-            {status !== 'playing' && status !== 'sharing' && (
+            <AnimatePresence>
+                {status === 'autoplay-blocked' && (
+                    <motion.div
+                        className="autoplay-blocked-overlay"
+                        initial={{ opacity: 0, scale: 0.9, y: "-40%", x: "-50%" }}
+                        animate={{ opacity: 1, scale: 1, y: "-50%", x: "-50%" }}
+                        exit={{ opacity: 0, scale: 0.9, y: "-40%", x: "-50%" }}
+                    >
+                        <p>The stream is ready, but the browser blocked autoplay.</p>
+                        <button
+                            className="resume-btn"
+                            onClick={() => {
+                                if (videoRef.current) {
+                                    videoRef.current.play()
+                                        .then(() => setStatus('playing'))
+                                        .catch(console.error);
+                                }
+                            }}
+                        >
+                            <RefreshCw size={18} /> Watch Stream
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {status !== 'playing' && status !== 'sharing' && status !== 'autoplay-blocked' && (
                 <div className="shared-view-status">
                     {status === 'capturing' && "Preparing Stream..."}
                     {status === 'connecting' && "Connecting to SFU Server..."}

@@ -13,30 +13,73 @@ class SfuVoiceClient {
         this.creatingSendTransport = null;
         this.creatingRecvTransport = null;
         this.audioStream = null;
+        this.loaded = false;
+        this.isReady = false;
+        this.pendingConsumption = []; // { producerId, resolve, reject }
+        this.initPromise = null;
+        this.initialized = false;
     }
 
     async init(roomCode, userId) {
-        this.roomCode = roomCode;
-        this.userId = userId;
-        console.log(`[VoiceSFU] Initializing for room: ${roomCode}, user: ${userId}`);
-
-        // 1. Get Router RTP Capabilities
-        const routerRtpCapabilities = await this.request('get_router_capabilities', { roomCode });
-        console.log('[VoiceSFU] Router capabilities received');
-
-        // 2. Load Device
-        if (!this.device) {
-            this.device = new Device();
+        if (this.initialized && this.roomCode === roomCode && this.device?.loaded) {
+            console.log(`[VoiceSFU] Already initialized for room: ${roomCode}`);
+            return Promise.resolve();
         }
 
-        if (!this.device.loaded) {
-            await this.device.load({ routerRtpCapabilities });
-            console.log('[VoiceSFU] Device loaded successfully.');
-        } else {
-            console.log('[VoiceSFU] Device already loaded');
+        if (this.initPromise) {
+            console.log(`[VoiceSFU] Initialization already in progress for ${this.roomCode}`);
+            return this.initPromise;
         }
 
-        console.log('[VoiceSFU] Device ready. Can produce audio:', this.device.canProduce('audio'));
+        this.initPromise = (async () => {
+            this.roomCode = roomCode;
+            this.userId = userId;
+            this.initialized = true;
+            console.log(`[VoiceSFU] Initializing for room: ${roomCode}, user: ${userId}`);
+
+            try {
+                // 1. Get Router RTP Capabilities
+                const routerRtpCapabilities = await this.request('get_router_capabilities', { roomCode });
+                console.log('[VoiceSFU] Router capabilities received');
+
+                // 2. Load Device
+                if (!this.device) {
+                    this.device = new Device();
+                }
+
+                if (!this.device.loaded) {
+                    await this.device.load({ routerRtpCapabilities });
+                    console.log('[VoiceSFU] Device loaded successfully.');
+                } else {
+                    console.log('[VoiceSFU] Device already loaded');
+                }
+
+                console.log('[VoiceSFU] Device ready. Can produce audio:', this.device.canProduce('audio'));
+                this.loaded = true;
+                this.isReady = true;
+                await this.flushPending();
+                console.log('[VoiceSFU] Initialization complete.');
+            } catch (err) {
+                console.error('[VoiceSFU] Initialization failed:', err);
+                this.initPromise = null;
+                this.initialized = false;
+                throw err;
+            }
+        })();
+
+        return this.initPromise;
+    }
+
+    async flushPending() {
+        if (this.pendingConsumption.length > 0) {
+            console.log(`[VoiceSFU] Flushing ${this.pendingConsumption.length} pending consumptions...`);
+            const consumersToFlush = [...this.pendingConsumption];
+            this.pendingConsumption = [];
+            for (const item of consumersToFlush) {
+                const { producerId, resolve, reject } = item;
+                this.consume(producerId).then(resolve).catch(reject);
+            }
+        }
     }
 
     async createSendTransport() {
@@ -45,7 +88,10 @@ class SfuVoiceClient {
 
         this.creatingSendTransport = (async () => {
             console.log('[VoiceSFU] Creating send transport...');
-            const params = await this.request('create_transport', { roomCode: this.roomCode, direction: 'send' });
+            const params = await this.request('create_transport', {
+                roomCode: this.roomCode,
+                direction: 'send'
+            });
 
             this.sendTransport = this.device.createSendTransport(params);
 
@@ -71,18 +117,11 @@ class SfuVoiceClient {
                         transportId: this.sendTransport.id,
                         kind,
                         rtpParameters,
-                        appData: { ...appData, userId: this.userId } // Ensure userId is attached
+                        appData: { ...appData, userId: this.userId }
                     });
                     callback({ id });
                 } catch (err) {
                     errback(err);
-                }
-            });
-
-            this.sendTransport.on('connectionstatechange', (state) => {
-                console.log(`[VoiceSFU] Send transport connection state: ${state}`);
-                if (state === 'failed') {
-                    console.error('[VoiceSFU] Send transport failed.');
                 }
             });
 
@@ -99,7 +138,10 @@ class SfuVoiceClient {
 
         this.creatingRecvTransport = (async () => {
             console.log('[VoiceSFU] Creating recv transport...');
-            const params = await this.request('create_transport', { roomCode: this.roomCode, direction: 'recv' });
+            const params = await this.request('create_transport', {
+                roomCode: this.roomCode,
+                direction: 'recv'
+            });
 
             this.recvTransport = this.device.createRecvTransport(params);
 
@@ -115,13 +157,6 @@ class SfuVoiceClient {
                         callback();
                     })
                     .catch(errback);
-            });
-
-            this.recvTransport.on('connectionstatechange', (state) => {
-                console.log(`[VoiceSFU] Recv transport connection state: ${state}`);
-                if (state === 'failed') {
-                    console.error('[VoiceSFU] Recv transport failed');
-                }
             });
 
             console.log('[VoiceSFU] Recv transport created');
@@ -144,7 +179,6 @@ class SfuVoiceClient {
                     sampleRate: { ideal: 48000 },
                     sampleSize: { ideal: 16 },
                     latency: { ideal: 0.01 },
-                    // Chrome legacy support for deep suppression
                     googEchoCancellation: { ideal: true },
                     googAutoGainControl: { ideal: true },
                     googNoiseSuppression: { ideal: true },
@@ -155,11 +189,6 @@ class SfuVoiceClient {
             this.audioStream = stream;
             const track = stream.getAudioTracks()[0];
 
-            // Step 1: Quality Debugging
-            console.log("[VoiceSFU] Supported constraints:", navigator.mediaDevices.getSupportedConstraints());
-            console.log("[VoiceSFU] Applied track settings:", track.getSettings());
-            console.log("[VoiceSFU] Applied track constraints:", track.getConstraints());
-
             if (!this.sendTransport) await this.createSendTransport();
 
             console.log('[VoiceSFU] Producing audio track...');
@@ -168,26 +197,16 @@ class SfuVoiceClient {
                 appData: { type: 'voice' },
                 priority: 'high',
                 codecOptions: {
-                    opusStereo: false, // Voice is better in Mono
-                    opusDtx: true,     // Transmit only when speaking
-                    opusFec: true      // Forward Error Correction
+                    opusStereo: false,
+                    opusDtx: true,
+                    opusFec: true
                 }
             });
-
-            // Bitrate limit to 64kbps
-            try {
-                const params = producer.rtpSender.getParameters();
-                if (!params.encodings) params.encodings = [{}];
-                params.encodings[0].maxBitrate = 64000;
-                await producer.rtpSender.setParameters(params);
-                console.log("[VoiceSFU] Bitrate capped at 64kbps");
-            } catch (e) {
-                console.warn("[VoiceSFU] Failed to cap bitrate:", e);
-            }
 
             this.producers.set('voice', producer);
 
             producer.on('transportclose', () => {
+                console.log('[VoiceSFU] Voice producer transport closed');
                 this.producers.delete('voice');
             });
 
@@ -220,7 +239,17 @@ class SfuVoiceClient {
     }
 
     async consume(producerId) {
-        if (!this.recvTransport) await this.createRecvTransport();
+        if (!this.isReady || !this.device?.loaded) {
+            console.log(`[VoiceSFU] Queueing consumption for ${producerId} until ready...`);
+            return new Promise((resolve, reject) => {
+                this.pendingConsumption.push({ producerId, resolve, reject });
+            });
+        }
+
+        if (!this.recvTransport) {
+            console.log(`[VoiceSFU] Recv transport missing for consume, creating now...`);
+            await this.createRecvTransport();
+        }
 
         const rtpCapabilities = this.device.rtpCapabilities;
         const params = await this.request('consume', {
@@ -234,10 +263,12 @@ class SfuVoiceClient {
         this.consumers.set(producerId, consumer);
 
         consumer.on('transportclose', () => {
+            console.log(`[VoiceSFU] Consumer transport closed: ${consumer.id}`);
             this.consumers.delete(producerId);
         });
 
         consumer.on('producerclose', () => {
+            console.log(`[VoiceSFU] Producer closed, closing consumer: ${consumer.id}`);
             this.consumers.delete(producerId);
         });
 
@@ -267,8 +298,13 @@ class SfuVoiceClient {
 
     async request(event, data) {
         return new Promise((resolve, reject) => {
+            if (!socket.connected) {
+                console.warn(`[VoiceSFU] Socket not connected for ${event}. SFU requests require an active socket.`);
+            }
+
             socket.emit(event, data, (response) => {
                 if (response && response.error) {
+                    console.error(`[VoiceSFU] Request error for ${event}:`, response.error);
                     reject(response.error);
                 } else {
                     resolve(response);
@@ -277,7 +313,8 @@ class SfuVoiceClient {
         });
     }
 
-    close() {
+    terminate() {
+        console.log('[VoiceSFU] Terminating client and cleaning up transports/consumers...');
         this.leaveVoice();
         if (this.sendTransport) {
             this.sendTransport.close();
@@ -289,6 +326,12 @@ class SfuVoiceClient {
         }
         this.consumers.forEach(c => c.close());
         this.consumers.clear();
+        this.loaded = false;
+        this.isReady = false;
+        this.pendingConsumption = [];
+        this.initPromise = null;
+        this.initialized = false;
+        this.device = null;
     }
 }
 

@@ -4,7 +4,7 @@ import ChatPanel from './ChatPanel';
 import './FullscreenChatOverlay.css';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const FullscreenChatOverlay = ({ chat, currentUser, participants, onSendMessage, onSendReaction }) => {
+const FullscreenChatOverlay = ({ chat, currentUser, participants, onSendMessage, onSendReaction, editMessage, deleteMessage }) => {
     const [isOpen, setIsOpen] = useState(false);
 
     return (
@@ -41,6 +41,8 @@ const FullscreenChatOverlay = ({ chat, currentUser, participants, onSendMessage,
                                 participants={participants}
                                 onSendMessage={onSendMessage}
                                 onSendReaction={onSendReaction}
+                                editMessage={editMessage}
+                                deleteMessage={deleteMessage}
                             />
                         </div>
                     </motion.div>

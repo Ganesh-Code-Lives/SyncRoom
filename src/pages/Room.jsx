@@ -71,7 +71,7 @@ const Room = () => {
         room, currentUser, currentMedia, setMedia, clearMedia, playback, chat, participants, activeReaction,
         sendMessage, updatePlayback, sendReaction,
         isLocked, isHost, toggleLock, kickParticipant, muteParticipant, addMessageReaction,
-        playlist, addToQueue, voteSkip, removeFromQueue, transferHost,
+        playlist, addToQueue, voteSkip, removeFromQueue, transferHost, editMessage, deleteMessage,
         isRoomLoaded, loadingStatus, joinRoom, leaveRoom, isConnected
     } = useRoom();
 
@@ -317,6 +317,8 @@ const Room = () => {
                             participants={participants}
                             onSendMessage={sendMessage}
                             onSendReaction={addMessageReaction}
+                            editMessage={editMessage}
+                            deleteMessage={deleteMessage}
                         />
                     </div>
 
@@ -405,7 +407,7 @@ const Room = () => {
                 <div className="sidebar-content">
                     {/* CHAT TAB */}
                     <div style={{ display: sidebarTab === 'chat' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
-                        <ChatPanel chat={chat} currentUser={currentUser} participants={participants} onSendMessage={sendMessage} onSendReaction={addMessageReaction} />
+                        <ChatPanel chat={chat} currentUser={currentUser} participants={participants} onSendMessage={sendMessage} onSendReaction={addMessageReaction} editMessage={editMessage} deleteMessage={deleteMessage} />
                     </div>
 
                     {/* MEMBERS TAB */}

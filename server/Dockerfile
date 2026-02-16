@@ -31,8 +31,8 @@ EXPOSE 3001
 
 # Expose Mediasoup UDP/TCP Ports (Range must match server config)
 # Standard WebRTC Range
-EXPOSE 10000-10100/udp
-EXPOSE 10000-10100/tcp
+EXPOSE 40000-49999/udp
+EXPOSE 40000-49999/tcp
 
 # Start Server
 CMD ["npm", "start"]
