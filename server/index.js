@@ -43,7 +43,8 @@ const io = new Server(httpServer, {
     // Server-Side Heartbeat / Keep-Alive Configuration
     // Crucial for Render/Load Balancers to prevent idle timeouts
     pingInterval: 25000, // Send ping every 25s
-    pingTimeout: 20000   // Wait 20s for pong before closing
+    pingTimeout: 20000,   // Wait 20s for pong before closing
+    transports: ['websocket'] // Force WebSocket only
 });
 
 // ============================================
@@ -108,9 +109,12 @@ io.on('connection', (socket) => {
             hostId: userId,
             hostName: userName,
             media: null,
-            isPlaying: false,
-            currentTime: 0,
-            lastSyncTime: Date.now(), // Authoritative server timestamp
+            videoState: {
+                currentTime: 0,
+                isPlaying: false,
+                playbackRate: 1,
+                lastSyncTime: Date.now()
+            },
             isLocked: false,
             users: [{
                 id: socket.id,
@@ -217,11 +221,11 @@ io.on('connection', (socket) => {
 
         console.log(`[Room] ${userName} ${isReconnect ? 'reconnected to' : 'joined'}: ${roomCode}`);
 
-        // Drift Compensation for Late Joiners
-        let syncedCurrentTime = room.currentTime;
-        if (room.isPlaying) {
-            const elapsed = (Date.now() - room.lastSyncTime) / 1000;
-            syncedCurrentTime += elapsed;
+        // Drift Compensation for Late Joiners (Authoritative Extrapolation)
+        let extrapolatedTime = room.videoState.currentTime;
+        if (room.videoState.isPlaying) {
+            const elapsed = (Date.now() - room.videoState.lastSyncTime) / 1000;
+            extrapolatedTime += (elapsed * room.videoState.playbackRate);
         }
 
         // Send Full Snapshot
@@ -229,18 +233,19 @@ io.on('connection', (socket) => {
             success: true,
             room: {
                 ...room,
-                currentTime: syncedCurrentTime
+                currentTime: extrapolatedTime,
+                isPlaying: room.videoState.isPlaying,
+                playbackRate: room.videoState.playbackRate
             }
         });
 
         // Force Sync for Member
         if (room.media && !isReconnect) {
-            socket.emit('playback_sync', {
-                action: 'late_join_sync',
-                media: room.media,
-                isPlaying: room.isPlaying,
-                currentTime: syncedCurrentTime,
-                serverTime: Date.now()
+            socket.emit('yt_sync_update', {
+                currentTime: extrapolatedTime,
+                isPlaying: room.videoState.isPlaying,
+                playbackRate: room.videoState.playbackRate,
+                timestamp: Date.now()
             });
         }
 
@@ -252,29 +257,31 @@ io.on('connection', (socket) => {
     });
 
     // --------------------------------------
-    // YOUTUBE TIME SYNC (New - Heartbeat)
+    // YOUTUBE EVENT HANDLER (Authoritative)
     // --------------------------------------
-    socket.on('yt_time_update', (data) => {
-        const { roomCode, currentTime, isPlaying, timestamp } = data;
+    socket.on('yt_event', (data) => {
+        const { roomCode, type, payload } = data;
         const room = rooms.get(roomCode);
 
-        // Validation: Room exists & Sender is Host
-        if (!room || room.hostId !== socket.roomUserId) return; // socket.roomUserId needs setting in join
-        // Alternatively, use socket.id and check vs room.hostId logic below (safer if we don't stamp socket)
+        if (!room) return;
+
+        // Host only check
         const user = room.users.find(u => u.id === socket.id);
         if (!user || !user.isHost) return;
 
         // Update Server State
-        room.currentTime = currentTime;
-        room.isPlaying = isPlaying;
-        room.lastSyncTime = Date.now(); // Server's own authoritative timestamp
+        if (payload.currentTime !== undefined) room.videoState.currentTime = payload.currentTime;
+        if (payload.isPlaying !== undefined) room.videoState.isPlaying = payload.isPlaying;
+        if (payload.playbackRate !== undefined) room.videoState.playbackRate = payload.playbackRate;
 
-        // Broadcast to everyone else (Except Host)
-        // Client uses `timestamp` (Host's time) for latency calculation
-        socket.to(roomCode).emit('yt_time_update', {
-            currentTime,
-            isPlaying,
-            timestamp // High-precision timestamp from Host (used for drift calc)
+        room.videoState.lastSyncTime = Date.now();
+
+        console.log(`[YouTube] Sync Event (${type}): ${roomCode} @ ${room.videoState.currentTime.toFixed(2)}s`);
+
+        // Broadcast to everyone else (Absolute Update)
+        socket.to(roomCode).emit('yt_sync_update', {
+            ...room.videoState,
+            timestamp: room.videoState.lastSyncTime
         });
     });
 
@@ -436,10 +443,17 @@ io.on('connection', (socket) => {
             room.media = media;
             console.log(`[Playback] Media updated:`, media ? media.type : 'null');
         }
-        if (isPlaying !== undefined) room.isPlaying = isPlaying;
-        if (currentTime !== undefined) room.currentTime = currentTime;
+        if (isPlaying !== undefined) {
+            room.isPlaying = isPlaying;
+            room.videoState.isPlaying = isPlaying;
+        }
+        if (currentTime !== undefined) {
+            room.currentTime = currentTime;
+            room.videoState.currentTime = currentTime;
+        }
 
         room.lastSyncTime = Date.now();
+        room.videoState.lastSyncTime = Date.now();
 
         // Broadcast to all clients
         io.to(roomCode).emit('playback_sync', {

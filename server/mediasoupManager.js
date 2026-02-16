@@ -50,6 +50,7 @@ const mediaCodecs = [
         clockRate: 48000,
         channels: 2,
         parameters: {
+            'useinbandfec': 1,
             'sprop-stereo': 1
         }
     },

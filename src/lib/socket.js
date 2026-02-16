@@ -10,7 +10,7 @@ export const socket = io(SOCKET_URL, {
     reconnectionDelay: 1000,        // Start with 1s delay
     reconnectionDelayMax: 5000,     // Max delay of 5s between retries
     timeout: 20000,                 // Connection timeout (20s)
-    transports: ['websocket', 'polling'] // Try WebSocket first, fallback to polling
+    transports: ['websocket']       // Force WebSocket only (no polling)
 });
 
 // --- DEBUG LOGS (Added for deployment diagnosis) ---

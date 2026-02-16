@@ -21,6 +21,8 @@
 .media-section {
     position: relative;
     flex: 1;
+    min-width: 0;
+    /* Fix flex layout issues preventing expansion */
     height: 100vh;
     overflow: hidden;
     background: radial-gradient(circle at center, #1e293b 0%, #000 100%);
@@ -203,8 +205,7 @@
     margin-right: -360px;
     transform: translateX(0);
     /* Reset transform */
-    background: transparent;
-    /* Hide background */
+    /* background: transparent; Removed to prevent black flash */
     pointer-events: none;
     /* Disable clicks on panel */
 }
@@ -539,6 +540,41 @@
 }
 
 
+
+/* Fullscreen Toggle Button */
+.mobile-fs-fab {
+    position: fixed;
+    /* Default (Desktop) Position: Bottom Left */
+    bottom: 24px;
+    left: 24px;
+    z-index: 60;
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
+    background: transparent;
+    border: none;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.mobile-fs-fab:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.mobile-fs-fab:active {
+    transform: scale(0.95);
+}
+
+/* Mobile Override: Raise to avoid Mic FAB overlap */
+@media (max-width: 768px) {
+    .mobile-fs-fab {
+        bottom: 100px;
+    }
+}
 
 /* ==================================================
    MOBILE LAYOUT (<= 768px) - FULL-PAGE SCROLL

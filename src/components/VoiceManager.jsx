@@ -125,30 +125,56 @@ const VoiceManager = () => {
                 localStreamRef.current.getTracks().forEach(t => t.stop());
             }
 
-            // Phase 1: High-Fidelity Audio Constraints
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    channelCount: { ideal: 1 },
-                    sampleRate: { ideal: 48000 },
-                    sampleSize: { ideal: 16 },
-                    echoCancellation: { ideal: isEchoOn },
-                    noiseSuppression: { ideal: isNoiseOn },
-                    autoGainControl: { ideal: true },
-                    latency: { ideal: 0.01 },
-                    // Phase 4: Google Chrome Advanced Suppression Enforcements
-                    googEchoCancellation: { ideal: isEchoOn },
-                    googNoiseSuppression: { ideal: isNoiseOn },
-                    googHighpassFilter: { ideal: true }
-                },
-                video: false
-            });
+            let stream;
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        channelCount: 1,
+                        sampleRate: 48000,
+                        sampleSize: 16,
+                        latency: 0,
+                        googEchoCancellation: true,
+                        googAutoGainControl: true,
+                        googNoiseSuppression: true,
+                        googHighpassFilter: true,
+                        googTypingNoiseDetection: true,
+                        googAudioMirroring: false
+                    },
+                    video: false
+                });
+            } catch (err) {
+                console.warn("[VoiceManager] Advanced capture failed, using basic fallback", err);
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            }
 
             if (cancelled) {
                 stream.getTracks().forEach(t => t.stop());
                 return;
             }
 
-            const audioTrack = stream.getAudioTracks()[0];
+            // Phase 4: Web Audio Gain Boost (1.2x)
+            let audioTrack = stream.getAudioTracks()[0];
+            try {
+                if (!audioContextRef.current) {
+                    audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                const ctx = audioContextRef.current;
+                if (ctx.state === 'suspended') await ctx.resume();
+
+                const source = ctx.createMediaStreamSource(stream);
+                const gainNode = ctx.createGain();
+                gainNode.gain.value = 1.2;
+                const dest = ctx.createMediaStreamDestination();
+
+                source.connect(gainNode);
+                gainNode.connect(dest);
+                audioTrack = dest.stream.getAudioTracks()[0];
+            } catch (e) {
+                console.error("[VoiceManager] Audio Processing Failed:", e);
+            }
 
             // Log verification for Phase 1
             console.log("[VoiceManager] 🚀 Audio Pipeline Verified:", {
@@ -171,11 +197,8 @@ const VoiceManager = () => {
             await sfuVoiceClient.init(room.code, currentUser.oderId);
             if (cancelled) return;
 
-            // Phase 7: Opus, Mono, DTX enforced at Client Level
-            const { producerId } = await sfuVoiceClient.joinVoice({
-                noiseSuppression: isNoiseOn,
-                echoCancellation: isEchoOn
-            });
+            // Phase 7: Use the High-Fidelity Track we just created
+            const { producerId } = await sfuVoiceClient.joinVoice(audioTrack);
 
             if (cancelled) return;
 
@@ -327,25 +350,47 @@ const VoiceManager = () => {
         const syncConstraints = async () => {
             try {
                 console.log("[VoiceManager] ⚙️ Phase 5: Re-capturing hardware with new constraints...");
-                const newStream = await navigator.mediaDevices.getUserMedia({
-                    audio: {
-                        echoCancellation: { ideal: isEchoOn },
-                        noiseSuppression: { ideal: isNoiseOn },
-                        autoGainControl: { ideal: true },
-                        channelCount: { ideal: 1 },
-                        sampleRate: { ideal: 48000 },
-                        sampleSize: { ideal: 16 },
-                        latency: { ideal: 0.01 },
-                        // Advanced legacy Chrome enforcements
-                        googEchoCancellation: { ideal: isEchoOn },
-                        googEchoCancellation2: { ideal: isEchoOn },
-                        googDAEchoCancellation: { ideal: isEchoOn },
-                        googNoiseSuppression: { ideal: isNoiseOn },
-                        googHighpassFilter: { ideal: true }
-                    }
-                });
+                let newStream;
+                try {
+                    newStream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                            channelCount: 1,
+                            sampleRate: 48000,
+                            sampleSize: 16,
+                            latency: 0,
+                            googEchoCancellation: true,
+                            googAutoGainControl: true,
+                            googNoiseSuppression: true,
+                            googHighpassFilter: true,
+                            googTypingNoiseDetection: true,
+                            googAudioMirroring: false
+                        },
+                        video: false
+                    });
+                } catch (e) {
+                    console.warn("Advanced capture failed (Phase 5), fallback", e);
+                    newStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                }
 
-                const newTrack = newStream.getAudioTracks()[0];
+                // Gain Boost logic
+                let newTrack = newStream.getAudioTracks()[0];
+                try {
+                    const ctx = audioContextRef.current;
+                    if (ctx && ctx.state !== 'closed') {
+                        if (ctx.state === 'suspended') await ctx.resume();
+                        const source = ctx.createMediaStreamSource(newStream);
+                        const gainNode = ctx.createGain();
+                        gainNode.gain.value = 1.2;
+                        const dest = ctx.createMediaStreamDestination();
+                        source.connect(gainNode);
+                        gainNode.connect(dest);
+                        newTrack = dest.stream.getAudioTracks()[0];
+                    }
+                } catch (err) { console.error("Gain boost failed Phase 5", err); }
+
                 newTrack.enabled = !isMuted;
 
                 console.log("[VoiceManager] 🔄 Phase 5: replaceTrack() in SFU pipeline...");

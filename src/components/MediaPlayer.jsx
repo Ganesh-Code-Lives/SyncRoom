@@ -15,6 +15,7 @@ import './MediaPlayer.css';
 const MediaContent = React.memo(({ media, playback, isHost, onClearMedia, updatePlayback }) => {
     const playerRef = useRef(null);
     const [showFallback, setShowFallback] = useState(false);
+    const { room } = useRoom();
 
     // Reset fallback on new media ID
     useEffect(() => {
@@ -35,107 +36,69 @@ const MediaContent = React.memo(({ media, playback, isHost, onClearMedia, update
     }
 
     // ========================================
-    // 2. SYNC LOGIC (Common for YouTube & Direct)
+    // 2. SYNC LOGIC (Server-Authoritative Mirror)
     // ========================================
-    // ========================================
-    // 2. SYNC LOGIC (YouTube Time Update & Drift Correction)
-    // ========================================
-    const lastSeekRef = useRef(0);
-    const lastKnownTimeRef = useRef(0); // Track authoritative time locally to survive host-switch reloads
-    const lastServerUpdateTime = useRef(0);
-    const lastServerCurrentTime = useRef(0);
-    const lastCorrectionTimeRef = useRef(0);
+    const lastLocalTimeRef = useRef(0);
 
+    // --- HOST SIDE: Event Broadcaster ---
+    const sendYtEvent = (type, payload = {}) => {
+        if (!playerRef.current || !isHost) return;
+
+        socket.emit('yt_event', {
+            roomCode: room?.code,
+            type,
+            payload: {
+                currentTime: playerRef.current.getCurrentTime() || 0,
+                isPlaying: playback.isPlaying,
+                playbackRate: playerRef.current.getInternalPlayer()?.getPlaybackRate() || 1,
+                ...payload
+            }
+        });
+    };
+
+    // --- MEMBER SIDE: Absolute Authority Sync ---
     useEffect(() => {
-        // As a Member, we track the Host's time strictly
-        if (isHost) return;
+        if (isHost || media?.type !== 'youtube') return;
 
-        const handleTimeUpdate = (data) => {
-            if (media.type !== 'youtube') return;
+        const handleSyncUpdate = (data) => {
+            if (!playerRef.current) return;
 
+            const ytPlayer = playerRef.current.getInternalPlayer();
             const now = Date.now();
-            const { currentTime, isPlaying, timestamp } = data;
-
-            // Store authoritative state (critical for extrapolation)
-            lastServerUpdateTime.current = timestamp || now;
-            lastServerCurrentTime.current = currentTime;
-            lastKnownTimeRef.current = currentTime;
 
             // 1. Latency Compensation
-            const latency = (now - (timestamp || now)) / 1000;
-            const targetTime = currentTime + (isPlaying ? latency : 0);
+            const latency = (now - data.timestamp) / 1000;
+            const adjustedTime = data.currentTime + (data.isPlaying ? (latency * data.playbackRate) : 0);
 
-            // 2. Drift Check
-            const localTime = playerRef.current?.getCurrentTime() || 0;
-            const drift = Math.abs(localTime - targetTime);
+            const localTime = playerRef.current.getCurrentTime() || 0;
+            const drift = Math.abs(localTime - adjustedTime);
 
-            // Thresholds (Refined)
-            const SOFT_THRESHOLD = 0.30;
-            const COOLDOWN = 1500;
+            // 2. Strict State Sync
+            if (data.isPlaying && !playback.isPlaying) {
+                ytPlayer?.playVideo();
+            } else if (!data.isPlaying && playback.isPlaying) {
+                ytPlayer?.pauseVideo();
+            }
 
-            if (drift > SOFT_THRESHOLD) {
-                // Anti-Oscillation
-                if (now - lastCorrectionTimeRef.current < COOLDOWN) {
-                    console.log(`[Sync] Drift ignored (cooldown): ${drift.toFixed(3)}s`);
-                    return;
-                }
+            // 3. Playback Rate Sync
+            if (ytPlayer?.getPlaybackRate() !== data.playbackRate) {
+                ytPlayer?.setPlaybackRate(data.playbackRate);
+            }
 
-                // Double-Seek Prevention
-                if (Math.abs(localTime - targetTime) < 0.25) {
-                    return;
-                }
-
-                console.log(`[Sync] Correcting drift: ${drift.toFixed(3)}s -> ${targetTime.toFixed(3)}s`);
-
-                playerRef.current.seekTo(targetTime, 'seconds');
-                lastCorrectionTimeRef.current = now;
+            // 4. Hard Snap Only (0.4s threshold — ignore minor drift)
+            if (drift > 0.4) {
+                console.log(`[Sync] Server Snap: ${drift.toFixed(3)}s`);
+                playerRef.current.seekTo(adjustedTime, 'seconds');
             }
         };
 
-        socket.on('yt_time_update', handleTimeUpdate);
-
-        return () => {
-            socket.off('yt_time_update', handleTimeUpdate);
-        };
-    }, [isHost, media]);
-
-    // ========================================
-    // 2b. LOCAL DRIFT MONITOR (Advanced Stabilization)
-    // ========================================
-    useEffect(() => {
-        // Only run for Members watching YouTube
-        if (isHost || !media || media.type !== 'youtube' || !playback.isPlaying) return;
-
-        const interval = setInterval(() => {
-            const now = Date.now();
-
-            // Respect cooldown
-            if (now - lastCorrectionTimeRef.current < 1500) return;
-
-            // Extrapolate server time
-            if (lastServerUpdateTime.current === 0) return;
-
-            const timePassed = (now - lastServerUpdateTime.current) / 1000;
-            if (timePassed > 5) return;
-
-            const expectedTime = lastServerCurrentTime.current + timePassed;
-            const localTime = playerRef.current?.getCurrentTime() || 0;
-            const drift = Math.abs(localTime - expectedTime);
-
-            // Tighter check for local monitoring
-            if (drift > 0.35) {
-                console.log(`[Sync] Local Monitor Drift: ${drift.toFixed(3)}s`);
-                playerRef.current.seekTo(expectedTime, 'seconds');
-                lastCorrectionTimeRef.current = now;
-            }
-        }, 500);
-
-        return () => clearInterval(interval);
-    }, [isHost, media, playback.isPlaying]);
+        socket.on('yt_sync_update', handleSyncUpdate);
+        return () => socket.off('yt_sync_update', handleSyncUpdate);
+    }, [isHost, media?.id, playback.isPlaying]);
 
     // Standard Playback State Sync (Redundant check but good for non-YT types & PAUSE SYNC)
     useEffect(() => {
-        if (isHost || !playerRef.current || !media || showFallback) return;
+        if (isHost || !playerRef.current || !media || showFallback || media.type === 'youtube') return;
 
         // If Paused, Force Sync to server time (Strong Consistency)
         if (!playback.isPlaying) {
@@ -165,11 +128,13 @@ const MediaContent = React.memo(({ media, playback, isHost, onClearMedia, update
     const handlePlay = () => {
         if (!isHost) return;
         updatePlayback('play', { isPlaying: true, currentTime: playerRef.current?.getCurrentTime() });
+        sendYtEvent('play', { isPlaying: true });
     };
 
     const handlePause = () => {
         if (!isHost) return;
         updatePlayback('pause', { isPlaying: false, currentTime: playerRef.current?.getCurrentTime() });
+        sendYtEvent('pause', { isPlaying: false });
     };
 
     const handleProgress = (state) => {
@@ -207,72 +172,46 @@ const MediaContent = React.memo(({ media, playback, isHost, onClearMedia, update
                         controls={isHost}
                         onPlay={handlePlay}
                         onPause={handlePause}
-                        onSeek={() => {
-                            // Track manual seeks for precedence
-                            lastSeekRef.current = Date.now();
-                        }}
                         onProgress={(state) => {
-                            // Host Logic: Optimized Emit
-                            if (isHost && media.type === 'youtube') {
-                                const now = Date.now();
+                            if (!isHost || !playerRef.current) return;
 
-                                // Interval: 1000ms
-                                if (!playerRef.current.lastSyncEmit || now - playerRef.current.lastSyncEmit > 1000) {
+                            const currentTime = state.playedSeconds;
+                            const timeSinceLast = Math.abs(currentTime - lastLocalTimeRef.current);
 
-                                    // Condition: Playing OR Recently Seeked (< 3s)
-                                    const recentlySeeked = (now - lastSeekRef.current) < 3000;
-
-                                    if (playback.isPlaying || recentlySeeked) {
-                                        const currentTime = state.playedSeconds;
-                                        const lastEmitTime = playerRef.current.lastEmitTime || 0;
-
-                                        // Condition: Delta Check > 0.25s (Avoid jittery/redundant updates)
-                                        if (Math.abs(currentTime - lastEmitTime) > 0.25) {
-                                            socket.emit('yt_time_update', {
-                                                roomCode: media.roomCode,
-                                                currentTime: currentTime,
-                                                isPlaying: true, // If progress is firing, we are inherently playing
-                                                timestamp: now
-                                            });
-                                            playerRef.current.lastSyncEmit = now;
-                                            playerRef.current.lastEmitTime = currentTime;
-
-                                            // Update refs for host transfer safety
-                                            lastKnownTimeRef.current = currentTime;
-                                        }
-                                    }
-                                }
+                            // Detect manual seek: time jump > 1.5s between progress ticks
+                            if (lastLocalTimeRef.current > 0 && timeSinceLast > 1.5) {
+                                console.log(`[Host] Seek Detected: ${timeSinceLast.toFixed(2)}s jump → ${currentTime.toFixed(2)}s`);
+                                sendYtEvent('seek', { currentTime });
                             }
+
+                            lastLocalTimeRef.current = currentTime;
+                        }}
+                        onPlaybackRateChange={(rate) => {
+                            if (isHost) sendYtEvent('rate_change', { playbackRate: rate });
                         }}
                         onReady={() => {
                             console.log("YouTube Player Ready");
-
-                            if (isHost) {
-                                // Restore last known time if we just became host
-                                if (lastKnownTimeRef.current > 0) {
-                                    playerRef.current.seekTo(lastKnownTimeRef.current, 'seconds');
-                                }
-                            } else {
-                                // Member: Force Snap to Extrapolated Server Time
-                                const now = Date.now();
-                                let targetTime = playback.currentTime;
-
-                                // If we have live server data (within last 30s), prefer that over playback prop
-                                if (lastServerUpdateTime.current > 0 && (now - lastServerUpdateTime.current) < 30000) {
-                                    const timeSinceUpdate = (now - lastServerUpdateTime.current) / 1000;
-                                    targetTime = lastServerCurrentTime.current + (playback.isPlaying ? timeSinceUpdate : 0);
-                                    console.log(`[Sync] Using Live Extrapolated Time: ${targetTime}`);
+                            if (!isHost && playback) {
+                                // Immediate Absolute Snap
+                                if (playback.currentTime > 0.5) {
+                                    playerRef.current.seekTo(playback.currentTime, 'seconds');
                                 }
 
-                                // Immediate Seek
-                                if (targetTime > 0.5) {
-                                    console.log(`[Sync] Ready Snap: ${targetTime.toFixed(2)}s`);
-                                    playerRef.current.seekTo(targetTime, 'seconds');
+                                if (playback.isPlaying) {
+                                    playerRef.current.getInternalPlayer()?.playVideo();
+                                } else {
+                                    playerRef.current.getInternalPlayer()?.pauseVideo();
                                 }
+
+                                if (playback.playbackRate) {
+                                    playerRef.current.getInternalPlayer()?.setPlaybackRate(playback.playbackRate);
+                                }
+                            } else if (isHost && playback.currentTime > 0) {
+                                playerRef.current.seekTo(playback.currentTime, 'seconds');
                             }
                         }}
                         onError={(e) => {
-                            console.error("YouTube Player Error, switching to fallback:", e);
+                            console.error("YouTube Player Error:", e);
                             setShowFallback(true);
                         }}
                         style={!isHost ? { pointerEvents: 'none' } : {}}

@@ -167,27 +167,43 @@ class SfuVoiceClient {
         return this.creatingRecvTransport;
     }
 
-    async joinVoice(constraints = {}) {
+    async joinVoice(trackOrConstraints = {}) {
         try {
-            console.log('[VoiceSFU] Capturing mic with constraints:', constraints);
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: { ideal: constraints.echoCancellation ?? true },
-                    noiseSuppression: { ideal: constraints.noiseSuppression ?? true },
-                    autoGainControl: { ideal: true },
-                    channelCount: { ideal: 1 },
-                    sampleRate: { ideal: 48000 },
-                    sampleSize: { ideal: 16 },
-                    latency: { ideal: 0.01 },
-                    googEchoCancellation: { ideal: true },
-                    googAutoGainControl: { ideal: true },
-                    googNoiseSuppression: { ideal: true },
-                    googHighpassFilter: { ideal: true }
-                },
-                video: false
-            });
+            let stream;
+            let track;
+
+            // Check if input is a MediaStreamTrack
+            if (trackOrConstraints instanceof MediaStreamTrack) {
+                console.log('[VoiceSFU] Using provided MediaStreamTrack');
+                track = trackOrConstraints;
+                stream = new MediaStream([track]);
+            } else {
+                // Input is constraints object
+                const constraints = trackOrConstraints;
+                console.log('[VoiceSFU] Capturing mic with constraints:', constraints);
+                stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 48000,
+                        channelCount: 1,
+                        sampleSize: 16,
+                        latency: 0,
+                        googEchoCancellation: true,
+                        googAutoGainControl: true,
+                        googNoiseSuppression: true,
+                        googHighpassFilter: true,
+                        googTypingNoiseDetection: true,
+                        googAudioMirroring: false,
+                        ...constraints // Allow overrides
+                    },
+                    video: false
+                });
+                track = stream.getAudioTracks()[0];
+            }
+
             this.audioStream = stream;
-            const track = stream.getAudioTracks()[0];
 
             if (!this.sendTransport) await this.createSendTransport();
 
@@ -196,10 +212,13 @@ class SfuVoiceClient {
                 track,
                 appData: { type: 'voice' },
                 priority: 'high',
+                encodings: [
+                    { maxBitrate: 128000 }
+                ],
                 codecOptions: {
-                    opusStereo: false,
-                    opusDtx: true,
-                    opusFec: true
+                    opusStereo: false, // Mono is standard for voice
+                    opusDtx: false,    // Disabled to prevent cutting dialogue
+                    opusFec: true      // Forward Error Correction (resilience)
                 }
             });
 

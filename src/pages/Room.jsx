@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactPlayer from 'react-player';
-import { Play, Pause, Volume2, Mic, Phone, Copy, Check, Send, MessageCircle, X, Lock, Unlock, Trash2, MicOff, SkipBack, SkipForward, LogOut, Users, Crown, ArrowLeftRight, ArrowLeft, User, Settings, Smile, WifiOff } from 'lucide-react';
+import { Play, Pause, Volume2, Mic, Phone, Copy, Check, Send, MessageCircle, X, Lock, Unlock, Trash2, MicOff, SkipBack, SkipForward, LogOut, Users, Crown, ArrowLeftRight, ArrowLeft, User, Settings, Smile, WifiOff, Maximize, Minimize } from 'lucide-react';
 import { useRoom } from '../context/RoomContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import GlowButton from '../components/GlowButton';
@@ -92,6 +92,59 @@ const Room = () => {
     const [copied, setCopied] = useState(false);
     const [mobileMessage, setMobileMessage] = useState('');
     const { success, info, error: showError } = useToast();
+
+    const [isFullscreenMobile, setIsFullscreenMobile] = useState(false);
+
+    // Mobile Fullscreen Logic
+    const toggleFullscreenMobile = async () => {
+        if (!isFullscreenMobile) {
+            try {
+                if (document.documentElement.requestFullscreen) {
+                    await document.documentElement.requestFullscreen();
+                } else if (document.documentElement.webkitRequestFullscreen) {
+                    await document.documentElement.webkitRequestFullscreen(); // Safari
+                }
+
+                if (screen.orientation && screen.orientation.lock) {
+                    await screen.orientation.lock('landscape').catch(e => console.warn("Orientation lock failed (likely unsupported)", e));
+                }
+                setIsFullscreenMobile(true);
+            } catch (err) {
+                console.error("Fullscreen failed:", err);
+            }
+        } else {
+            try {
+                if (document.fullscreenElement || document.webkitFullscreenElement) {
+                    if (document.exitFullscreen) await document.exitFullscreen();
+                    else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+                }
+
+                if (screen.orientation && screen.orientation.unlock) {
+                    screen.orientation.unlock();
+                }
+                setIsFullscreenMobile(false);
+            } catch (err) {
+                console.error("Exit fullscreen failed:", err);
+            }
+        }
+    };
+
+    useEffect(() => {
+        const handleChange = () => {
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                setIsFullscreenMobile(false);
+                if (screen.orientation && screen.orientation.unlock) {
+                    screen.orientation.unlock();
+                }
+            }
+        };
+        document.addEventListener('fullscreenchange', handleChange);
+        document.addEventListener('webkitfullscreenchange', handleChange);
+        return () => {
+            document.removeEventListener('fullscreenchange', handleChange);
+            document.removeEventListener('webkitfullscreenchange', handleChange);
+        };
+    }, []);
 
     useEffect(() => {
         sessionStorage.setItem('syncroom_sidebar_tab', sidebarTab);
@@ -201,6 +254,32 @@ const Room = () => {
         <div className="room-page">
             <VoiceManager />
             <VoiceBottomSheet />
+
+            {isFullscreenMobile && (
+                <style>{`
+                    .mobile-header, .mobile-chat-sheet, .mobile-voice-fab, .mobile-chat-fab, .mobile-bottom { display: none !important; }
+                    .media-section { position: fixed !important; top: 0 !important; height: 100vh !important; z-index: 1000 !important; background: black !important; padding: 0 !important; }
+                    .video-container { width: 100vw !important; height: 100vh !important; max-height: none !important; }
+                    .main-video { object-fit: contain !important; width: 100% !important; height: 100% !important; }
+                `}</style>
+            )}
+
+            {/* Fullscreen Exit Button */}
+            {isFullscreenMobile && (
+                <button
+                    onClick={toggleFullscreenMobile}
+                    style={{
+                        position: 'fixed', top: '20px', right: '20px', zIndex: 10001,
+                        background: 'rgba(0,0,0,0.6)', color: 'white',
+                        border: '1px solid rgba(255,255,255,0.3)', borderRadius: '50%',
+                        width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer'
+                    }}
+                >
+                    <Minimize size={20} />
+                </button>
+            )}
+
             {/* MOBILE HEADER - Fixed Top */}
             <div className="mobile-header">
                 <button className="mobile-back-btn" onClick={() => navigate('/')}>
@@ -349,6 +428,17 @@ const Room = () => {
                 >
                     <MessageCircle size={24} />
                     {chat.length > 0 && <span className="chat-badge-dot"></span>}
+                </button>
+            )}
+
+            {/* MOBILE FULLSCREEN TOGGLE (Landscape) */}
+            {!showMobileChat && !isFullscreenMobile && (
+                <button
+                    className="mobile-fs-fab"
+                    onClick={toggleFullscreenMobile}
+                    title="Toggle Fullscreen"
+                >
+                    <Maximize size={24} />
                 </button>
             )}
 
