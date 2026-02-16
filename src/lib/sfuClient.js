@@ -166,20 +166,26 @@ class SfuClient {
         return this.creatingRecvTransport;
     }
 
-    async produce(track) {
+    async produce(track, customOptions = {}) {
         if (!this.sendTransport) await this.createSendTransport();
 
-        let options = { track };
+        let options = { track, ...customOptions };
+
         if (track.kind === 'video') {
-            options.encodings = [{ maxBitrate: 2500000 }];
-            options.codecOptions = {
-                videoGoogleStartBitrate: 1500000
-            };
+            if (!options.encodings) {
+                options.encodings = [{ maxBitrate: 2500000 }];
+            }
+            if (!options.codecOptions) {
+                options.codecOptions = {
+                    videoGoogleStartBitrate: 1500000
+                };
+            }
         } else if (track.kind === 'audio') {
-            options.codecOptions = {
+            const defaultCodecOptions = {
                 opusStereo: true,
                 opusDtx: false
             };
+            options.codecOptions = { ...defaultCodecOptions, ...options.codecOptions };
         }
 
         options.appData = {

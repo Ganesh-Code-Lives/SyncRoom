@@ -22,6 +22,12 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
     const stopSharing = useCallback(() => {
         sfuClient.terminate();
         if (localStreamRef.current) {
+            // Cleanup AudioContext
+            if (localStreamRef.current.audioContext) {
+                localStreamRef.current.audioContext.close().catch(e => console.warn("AudioContext close error:", e));
+                delete localStreamRef.current.audioContext;
+            }
+
             localStreamRef.current.getTracks().forEach(t => t.stop());
             localStreamRef.current = null;
         }
@@ -54,45 +60,46 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
                 audio: {
                     echoCancellation: false,
                     noiseSuppression: false,
-                    autoGainControl: false
+                    autoGainControl: false,
+                    channelCount: 2,
+                    sampleRate: 48000
                 }
             });
             localStreamRef.current = stream;
 
             console.log("[SFU] Stream acquired");
 
-            // --- PROFESSIONAL AUDIO PIPELINE (COMPRESSOR + GAIN) ---
+            // --- PROFESSIONAL AUDIO PIPELINE (GAIN ONLY - 1.3x) ---
             const audioTrack = stream.getAudioTracks()[0];
             if (audioTrack) {
                 try {
-                    console.log("[SFU] Initializing Professional Audio Processing...");
+                    console.log("[SFU] Initializing Audio Gain Boost (1.3x)...");
                     const audioContext = new AudioContext({ sampleRate: 48000 });
+
+                    // Handle autoplay policy
+                    if (audioContext.state === 'suspended') {
+                        await audioContext.resume();
+                    }
+
                     const source = audioContext.createMediaStreamSource(new MediaStream([audioTrack]));
                     const gainNode = audioContext.createGain();
-                    const compressor = audioContext.createDynamicsCompressor();
 
-                    // Mild compression to prevent clipping with high gain
-                    compressor.threshold.setValueAtTime(-10, audioContext.currentTime);
-                    compressor.knee.setValueAtTime(20, audioContext.currentTime);
-                    compressor.ratio.setValueAtTime(3, audioContext.currentTime);
-                    compressor.attack.setValueAtTime(0.003, audioContext.currentTime);
-                    compressor.release.setValueAtTime(0.25, audioContext.currentTime);
+                    gainNode.gain.value = 1.3; // 1.3x Boost (Safe to prevent clipping)
 
-                    gainNode.gain.value = 1.6; // 1.6x Boost (Safe range)
-
-                    // Chain: Source -> Compressor -> Gain -> Destination
-                    source.connect(compressor);
-                    compressor.connect(gainNode);
-
+                    // Chain: Source -> Gain -> Destination
+                    source.connect(gainNode);
                     const destination = audioContext.createMediaStreamDestination();
                     gainNode.connect(destination);
 
                     const boostedTrack = destination.stream.getAudioTracks()[0];
-                    console.log("[SFU] Audio pipeline active: Compressor -> Gain(1.6x)");
+                    console.log("[SFU] Audio pipeline active: Gain(1.3x)");
 
                     // Replace original track with processed track
                     stream.removeTrack(audioTrack);
                     stream.addTrack(boostedTrack);
+
+                    // Attach context to stream for cleanup
+                    localStreamRef.current.audioContext = audioContext;
 
                 } catch (e) {
                     console.error("[SFU] Audio processing failed:", e);
@@ -118,7 +125,17 @@ const SharedViewPlayerView = React.memo(({ isHost, roomCode, hostId, onClearMedi
             console.log("[SFU] Producing tracks...");
             for (const track of stream.getTracks()) {
                 console.log(`[SFU] Producing ${track.kind} track...`);
-                await sfuClient.produce(track);
+                if (track.kind === 'audio') {
+                    await sfuClient.produce(track, {
+                        encodings: [{ maxBitrate: 256000, dtx: false }],
+                        codecOptions: {
+                            opusStereo: true,
+                            maxAverageBitrate: 256000
+                        }
+                    });
+                } else {
+                    await sfuClient.produce(track);
+                }
             }
             console.log("[SFU] All tracks produced");
 
