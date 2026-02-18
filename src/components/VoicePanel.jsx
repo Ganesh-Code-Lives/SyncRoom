@@ -57,13 +57,7 @@ const VoicePanel = () => {
                 </div>
             </div>
 
-            {/* Phase 4: Headphone Warning */}
-            {isVoiceActive && !isDeafened && (
-                <div className="voice-warning">
-                    <AlertCircle size={14} color="#f59e0b" />
-                    <span className="warning-text">Headphones recommended to prevent echo.</span>
-                </div>
-            )}
+
 
             <div className="voice-participants-grid">
                 {voiceParticipants.map(member => (
@@ -76,6 +70,10 @@ const VoicePanel = () => {
                                 src={member.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.oderId}`}
                                 alt={member.name}
                                 className="member-avatar"
+                                onError={(e) => {
+                                    e.currentTarget.onerror = null;
+                                    e.currentTarget.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.oderId}`;
+                                }}
                             />
                             {member.isSpeaking && <div className="speaking-ring"></div>}
                             <div className="member-status-badges">

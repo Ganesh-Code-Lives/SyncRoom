@@ -130,26 +130,29 @@
     position: relative;
     width: 32px;
     height: 32px;
+    border-radius: 50%;
+    overflow: hidden;
+    background-color: #334155;
+    flex-shrink: 0;
+    border: 2px solid transparent;
+    transition: all 0.2s;
 }
 
 .member-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
+    width: 100%;
+    height: 100%;
     object-fit: cover;
-    border: 2px solid transparent;
-    transition: all 0.2s;
-    flex-shrink: 0;
-    aspect-ratio: 1/1;
+    display: block;
 }
 
-.voice-member-card.speaking .member-avatar {
-    border-color: #10b981;
+.voice-member-card.speaking .avatar-wrapper {
+    border: 2px solid #10b981;
     transform: scale(1.05);
+    transition: all 0.2s;
 }
 
-.voice-member-card.local .member-avatar {
-    border-color: rgba(139, 92, 246, 0.5);
+.voice-member-card.local .avatar-wrapper {
+    border: 2px solid rgba(139, 92, 246, 0.5);
 }
 
 .speaking-ring {

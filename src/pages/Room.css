@@ -211,10 +211,11 @@
 }
 
 /* Hide content when sidebar is hidden */
+/* Hide content when sidebar is hidden */
 .room-sidebar.sidebar-hidden>*:not(.chat-toggle-arrow) {
-    opacity: 0;
+    /* opacity: 0; */
     pointer-events: none;
-    transition: opacity 0.2s ease;
+    /* transition: opacity 0.2s ease; */
 }
 
 /* Keep Arrow Visible and Purple */

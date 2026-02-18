@@ -182,6 +182,18 @@ io.on('connection', (socket) => {
         const isReconnect = !!existingUser;
 
         if (existingUser) {
+            // Fix Ghost User: Cleanup old peer state immediately
+            console.log(`[Room] User ${userName} reconnected. Cleaning up old socket: ${existingUser.id}`);
+            mediasoupManager.cleanupPeer(existingUser.id);
+
+            // Remove from voiceUsers to prevent "ghost" icons
+            const wasInVoice = room.voiceUsers.some(u => u.oderId === userId);
+            if (wasInVoice) {
+                room.voiceUsers = room.voiceUsers.filter(u => u.oderId !== userId);
+                io.to(roomCode).emit('voice_users_update', room.voiceUsers);
+                console.log(`[Room] Removed reconnected user ${userName} from voice list.`);
+            }
+
             // Update socket ID for reconnection
             existingUser.id = socket.id;
         } else {
@@ -805,7 +817,9 @@ function handleUserLeave(socket) {
 
     // 1. Remove User FIRST (Correct Logic)
     room.users = room.users.filter(u => u.id !== socket.id);
-    room.voiceUsers = room.voiceUsers.filter(u => u.id !== socket.id);
+
+    // Fix Ghost Users: Remove by ID (oderId) to catch any stale socket references
+    room.voiceUsers = room.voiceUsers.filter(u => u.oderId !== user.oderId);
 
     // Notify others about voice state
     io.to(roomCode).emit('voice_users_update', room.voiceUsers);

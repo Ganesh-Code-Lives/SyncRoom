@@ -19,6 +19,7 @@ import VoicePanel from '../components/VoicePanel';
 import VoiceBottomSheet from '../components/voice/VoiceBottomSheet';
 import LoadingScreen from '../components/LoadingScreen';
 import { useVoice } from '../context/VoiceContext';
+import useFullscreen from '../hooks/useFullscreen';
 
 // ========================================================
 // MEMOIZED MEDIA SECTION
@@ -48,15 +49,7 @@ const MemoizedMediaSection = React.memo(({ currentMedia, isHost, chat, participa
                         media={currentMedia}
                         isHost={isHost}
                         onClearMedia={clearMedia}
-                    >
-                        <FullscreenChatOverlay
-                            chat={chat}
-                            currentUser={currentUser}
-                            participants={participants}
-                            onSendMessage={sendMessage}
-                            onSendReaction={addMessageReaction}
-                        />
-                    </MediaPlayer>
+                    />
                 )}
             </div>
         </div>
@@ -92,6 +85,9 @@ const Room = () => {
     const [copied, setCopied] = useState(false);
     const [mobileMessage, setMobileMessage] = useState('');
     const { success, info, error: showError } = useToast();
+
+    // Fullscreen Hook
+    const isFullscreen = useFullscreen();
 
     const [isFullscreenMobile, setIsFullscreenMobile] = useState(false);
 
@@ -237,6 +233,22 @@ const Room = () => {
         }
     }, [isRoomLoaded, room, navigate]);
 
+    // Auto-open chat on new message
+    const prevChatLengthRef = useRef(chat.length);
+
+    useEffect(() => {
+        // Only trigger if chat length increased (new message)
+        if (chat.length > prevChatLengthRef.current) {
+            // Set sidebar to visible if it's currently hidden
+            if (!isSidePanelVisible) {
+                console.log('[Room] New message received, auto-opening sidebar');
+                setIsSidePanelVisible(true);
+            }
+        }
+        // Update ref for next render
+        prevChatLengthRef.current = chat.length;
+    }, [chat.length, isSidePanelVisible]);
+
 
     if (!isRoomLoaded) {
         // Safe access to loadingStatus from context, default to "Loading..."
@@ -359,6 +371,38 @@ const Room = () => {
                             <button onClick={handleExitRoom} style={{ padding: '0.75rem', borderRadius: '8px', background: 'rgba(239,68,68,0.2)', color: '#ef4444', border: '1px solid #ef4444' }}>
                                 Leave Room
                             </button>
+
+                            {/* Overlay Toggle Setting */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', marginTop: '0.5rem' }}>
+                                <span style={{ fontSize: '0.9rem', color: '#bfdbfe' }}>Fullscreen Chat</span>
+                                <label className="switch" style={{ position: 'relative', display: 'inline-block', width: '40px', height: '22px' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={localStorage.getItem('syncroom_show_fs_chat') !== 'false'}
+                                        onChange={(e) => {
+                                            localStorage.setItem('syncroom_show_fs_chat', e.target.checked);
+                                            // Force re-render not strictly needed as overlay reads from localStorage on mount/update, 
+                                            // but to be reactive immediately we might need global state or simple forceUpdate. 
+                                            // For now, simpler: user might need to toggle FS to see effect if we don't use context.
+                                            // Let's stick to simple LS for now as per strict isolation.
+                                            // To make it reactive, we can dispatch a custom event.
+                                            window.dispatchEvent(new Event('storage'));
+                                        }}
+                                        style={{ opacity: 0, width: 0, height: 0 }}
+                                    />
+                                    <span style={{
+                                        position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0,
+                                        backgroundColor: localStorage.getItem('syncroom_show_fs_chat') !== 'false' ? '#8b5cf6' : '#4b5563',
+                                        transition: '.4s', borderRadius: '34px'
+                                    }}>
+                                        <span style={{
+                                            position: 'absolute', content: "", height: '16px', width: '16px', left: '3px', bottom: '3px',
+                                            backgroundColor: 'white', transition: '.4s', borderRadius: '50%',
+                                            transform: localStorage.getItem('syncroom_show_fs_chat') !== 'false' ? 'translateX(18px)' : 'translateX(0)'
+                                        }}></span>
+                                    </span>
+                                </label>
+                            </div>
                         </div>
                     </motion.div>
                 )}
@@ -379,6 +423,9 @@ const Room = () => {
                     clearMedia={clearMedia}
                     roomType={room?.type}
                 />
+
+                {/* Fullscreen Chat Overlay (Portal) */}
+                <FullscreenChatOverlay isFullscreen={isFullscreen} />
 
                 {/* MOBILE CHAT SHEET (Overlay) */}
                 <div className={`mobile-chat-sheet ${showMobileChat ? 'visible' : 'hidden'}`}>

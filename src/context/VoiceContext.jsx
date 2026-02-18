@@ -10,8 +10,8 @@ export const VoiceProvider = ({ children }) => {
     const [voiceParticipants, setVoiceParticipants] = useState([]);
     const [isMuted, setIsMuted] = useState(false);
     const [isDeafened, setIsDeafened] = useState(false);
-    const [isNoiseOn, setIsNoiseOn] = useState(true);
-    const [isEchoOn, setIsEchoOn] = useState(true);
+    const [isNoiseOn, setIsNoiseOn] = useState(false);
+    const [isEchoOn, setIsEchoOn] = useState(false);
     const [userVolumes, setUserVolumes] = useState({}); // userId -> volume (0-1)
     const [localVolume, setLocalVolume] = useState(0); // 0-100 for mic meter
     const [voiceTrigger, setVoiceTrigger] = useState(null); // 'join' | 'leave' | null

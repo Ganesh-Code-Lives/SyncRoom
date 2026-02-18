@@ -186,17 +186,9 @@ class SfuVoiceClient {
                         echoCancellation: true,
                         noiseSuppression: true,
                         autoGainControl: true,
-                        sampleRate: 48000,
                         channelCount: 1,
-                        sampleSize: 16,
-                        latency: 0,
-                        googEchoCancellation: true,
-                        googAutoGainControl: true,
-                        googNoiseSuppression: true,
-                        googHighpassFilter: true,
-                        googTypingNoiseDetection: true,
-                        googAudioMirroring: false,
-                        ...constraints // Allow overrides
+                        sampleRate: 48000,
+                        sampleSize: 16
                     },
                     video: false
                 });
@@ -213,12 +205,12 @@ class SfuVoiceClient {
                 appData: { type: 'voice' },
                 priority: 'high',
                 encodings: [
-                    { maxBitrate: 128000 }
+                    { maxBitrate: 64000 } // 64kbps - Discord sweet spot for stability
                 ],
                 codecOptions: {
-                    opusStereo: false, // Mono is standard for voice
-                    opusDtx: false,    // Disabled to prevent cutting dialogue
-                    opusFec: true      // Forward Error Correction (resilience)
+                    opusStereo: false, // Force Mono
+                    opusDtx: true,     // Enable DTX (Silence Suppression)
+                    opusFec: true      // Enable Forward Error Correction
                 }
             });
 
@@ -245,10 +237,19 @@ class SfuVoiceClient {
 
     async replaceAudioTrack(newTrack) {
         const producer = this.producers.get('voice');
-        if (!producer) return;
+
+        if (!producer || producer.closed) {
+            console.warn("[VoiceSFU] Cannot replace track - Producer not found or closed");
+            return;
+        }
+
+        if (!newTrack || newTrack.readyState === 'ended') {
+            console.error("[VoiceSFU] Cannot replace track - New track is invalid or ended", newTrack);
+            throw new Error("New audio track is not live");
+        }
 
         try {
-            console.log("[VoiceSFU] Replacing audio track in producer...");
+            console.log(`[VoiceSFU] Replacing audio track [${newTrack.id}] state:${newTrack.readyState}`);
             await producer.replaceTrack({ track: newTrack });
             console.log("[VoiceSFU] Audio track replaced successfully");
         } catch (err) {

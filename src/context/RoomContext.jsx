@@ -531,6 +531,9 @@ export const RoomProvider = ({ children }) => {
 
         // Replace optimistic message with server message when received
         // (handled in handleNewMessage by matching content + senderId)
+
+        // Dispatch local event for isolated components (like FullscreenChatOverlay)
+        window.dispatchEvent(new CustomEvent('syncroom:local_message', { detail: optimisticMessage }));
     }, [room, getUserInfo, user]);
 
     const editMessage = useCallback((messageId, newContent) => {
