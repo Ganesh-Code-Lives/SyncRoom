@@ -171,7 +171,7 @@ class MediasoupManager {
             listenIps: [
                 {
                     ip: '0.0.0.0',
-                    announcedIp: this.announcedIp,
+                    announcedIp: '15.207.20.14',
                 }
             ],
             enableUdp: true,
