@@ -82,23 +82,38 @@ class MediasoupManager {
         console.log('[Mediasoup] Creating 2 workers...');
         const numWorkers = 2;
         for (let i = 0; i < numWorkers; i++) {
-            console.log(`[Mediasoup] Spawning worker ${i + 1}/${numWorkers}...`);
-            const worker = await mediasoup.createWorker({
-                rtcMinPort: 40000,
-                rtcMaxPort: 40100,
-                logLevel: 'warn',
-                logTags: ['ice', 'dtls', 'rtp', 'srtp']
-            });
-
-            worker.on('died', () => {
-                console.error('mediasoup worker died, exiting... [pid:%d]', worker.pid);
-                process.exit(1);
-            });
-
-            this.workers.push(worker);
-            console.log(`[Mediasoup] Worker ${i + 1} created (pid: ${worker.pid})`);
+            await this._spawnWorker(i);
         }
         console.log(`[Mediasoup] SUCCESS: Initialized ${this.workers.length} workers`);
+    }
+
+    async _spawnWorker(index) {
+        console.log(`[Mediasoup] Spawning worker ${index + 1}...`);
+        const worker = await mediasoup.createWorker({
+            // Each worker gets its own non-overlapping port range (500 ports each)
+            rtcMinPort: 40000 + (index * 500),
+            rtcMaxPort: 40499 + (index * 500),
+            logLevel: 'warn',
+            logTags: ['ice', 'dtls', 'rtp', 'srtp']
+        });
+
+        worker.on('died', async () => {
+            console.error(`[Mediasoup] ⚠️ Worker ${index} died (pid: ${worker.pid}). Respawning in 2s...`);
+            // Replace the dead worker in the array instead of crashing
+            this.workers[index] = null;
+            setTimeout(async () => {
+                try {
+                    await this._spawnWorker(index);
+                    console.log(`[Mediasoup] ✅ Worker ${index} respawned successfully`);
+                } catch (err) {
+                    console.error(`[Mediasoup] ❌ Worker ${index} respawn failed:`, err);
+                }
+            }, 2000);
+        });
+
+        this.workers[index] = worker;
+        console.log(`[Mediasoup] Worker ${index + 1} created (pid: ${worker.pid})`);
+        return worker;
     }
 
     async determineAnnouncedIp() {
@@ -166,12 +181,14 @@ class MediasoupManager {
     }
 
     async createWebRtcTransport(router) {
-        console.log(`[Mediasoup] 🛠 Creating WebRTC Transport (Announced IP: ${this.announcedIp})`); // DEBUG LOG
+        // Use ANNOUNCED_IP env var first, then auto-detected IP, then hardcoded fallback
+        const announcedIp = process.env.ANNOUNCED_IP || this.announcedIp || '15.207.20.14';
+        console.log(`[Mediasoup] 🛠 Creating WebRTC Transport (Announced IP: ${announcedIp})`);
         const transport = await router.createWebRtcTransport({
             listenIps: [
                 {
                     ip: '0.0.0.0',
-                    announcedIp: '15.207.20.14',
+                    announcedIp: announcedIp,
                 }
             ],
             enableUdp: true,
