@@ -16,10 +16,13 @@ const io = new Server(httpServer, {
             const allowedOrigins = [
                 "http://localhost:5173",
                 "http://localhost:5174",
-                "https://syncroom-theta.vercel.app",
                 "http://localhost:5175",
                 "http://localhost:5176",
-                "http://localhost:3000"
+                "http://localhost:3000",
+                "https://syncroom-theta.vercel.app",
+                "https://syncroom.live",
+                "https://www.syncroom.live",
+                "https://syncroom-app.duckdns.org"
             ];
             // Allow all Vercel deployments (preview & production) for ease of testing
             if (origin && origin.endsWith('.vercel.app')) {
