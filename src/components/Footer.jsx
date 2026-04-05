@@ -41,6 +41,11 @@ const Footer = () => {
                     <a href="#" className="footer-link">Instagram</a>
                 </div>
             </div>
+
+
+            <div className="footer-bottom">
+                <p>Developed by <span className="developer-name">Ganesh Mamidiseththy</span></p>
+            </div>
         </footer>
     );
 };

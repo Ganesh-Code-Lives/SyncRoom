@@ -59,7 +59,7 @@ const Landing = () => {
                 </section>
 
                 {/* Features Grid */}
-                <section className="features-section">
+                <section id="features" className="features-section">
                     <h2 className="section-title">Why SyncRoom?</h2>
                     <div className="features-grid">
                         <Card hover className="feature-card">
@@ -95,7 +95,7 @@ const Landing = () => {
                 </section>
 
                 {/* How it Works */}
-                <section className="how-it-works">
+                <section id="how-it-works" className="how-it-works">
                     <div className="steps-container">
                         <div className="step-item">
                             <div className="step-number">1</div>

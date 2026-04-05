@@ -81,3 +81,22 @@
         align-items: center;
     }
 }
+
+.footer-bottom {
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border-subtle);
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.developer-name {
+    color: var(--accent-primary);
+    font-weight: 500;
+    transition: color 0.3s ease;
+}
+
+.developer-name:hover {
+    color: var(--text-secondary);
+}
