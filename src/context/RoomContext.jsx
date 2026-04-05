@@ -4,6 +4,7 @@ import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { socket } from '../lib/socket';
 import { sfuVoiceClient } from '../lib/sfuVoiceClient';
+import { sfuClient } from '../lib/sfuClient';
 
 const RoomContext = createContext();
 
@@ -76,6 +77,13 @@ export const RoomProvider = ({ children }) => {
             console.log('[Socket] Connected:', socket.id);
             setIsConnected(true);
             setConnectionError(null);
+
+            // CRITICAL: Reset SFU clients on every (re)connect.
+            // The server may have restarted, wiping all transport state.
+            // Sending stale transport IDs causes "Transport not found" errors.
+            console.log('[Socket] Resetting SFU clients (server may have restarted)...');
+            sfuVoiceClient.terminate();
+            sfuClient.terminate();
 
             // AUTO-REJOIN: Priority 1: Current Room State, Priority 2: Session Storage
             const codeToJoin = room?.code || sessionStorage.getItem('syncroom_last_room');

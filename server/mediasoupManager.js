@@ -156,9 +156,17 @@ class MediasoupManager {
     }
 
     getWorker() {
-        const worker = this.workers[this.nextWorkerIdx];
-        this.nextWorkerIdx = (this.nextWorkerIdx + 1) % this.workers.length;
-        return worker;
+        // Skip null workers (happens briefly during respawn window)
+        const numWorkers = this.workers.length;
+        for (let i = 0; i < numWorkers; i++) {
+            const idx = (this.nextWorkerIdx + i) % numWorkers;
+            const worker = this.workers[idx];
+            if (worker) {
+                this.nextWorkerIdx = (idx + 1) % numWorkers;
+                return worker;
+            }
+        }
+        throw new Error('[Mediasoup] No healthy workers available');
     }
 
     async getOrCreateRoom(roomId) {
