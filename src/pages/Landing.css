@@ -322,10 +322,24 @@
     .hero-actions {
         flex-direction: column;
         width: 100%;
+        align-items: center;
+        gap: 1.5rem;
     }
 
-    .hero-actions button {
+    .hero-actions > button {
+        width: auto;
+        min-width: 220px;
+    }
+
+    .join-form {
         width: 100%;
+        display: flex;
+        justify-content: center;
+        gap: 0.5rem;
+    }
+
+    .join-input {
+        width: 160px;
     }
 }
 
@@ -476,19 +490,108 @@
     padding: 0 8vw;
 }
 
-.seo-text-section .section-title {
+.seo-intro {
     text-align: center;
-    margin-bottom: 3rem;
-    font-size: 2.5rem;
+    max-width: 700px;
+    margin: 0 auto 3rem;
 }
 
-.seo-text-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 3rem;
+.section-subtitle {
     color: var(--text-secondary);
-    line-height: 1.8;
-    font-size: 1.125rem;
+    font-size: 1.25rem;
+    line-height: 1.6;
+}
+
+.seo-features-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 3rem;
+    margin-bottom: 4rem;
+}
+
+.highlight-card {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 3rem 2rem !important;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    transition: transform 0.3s ease, border-color 0.3s ease !important;
+}
+
+.highlight-card:hover {
+    transform: translateY(-5px);
+    border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.highlight-icon {
+    width: 72px;
+    height: 72px;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 2rem;
+    transition: transform 0.3s ease;
+}
+
+.icon-sync { 
+    background: rgba(168, 85, 247, 0.15); 
+    color: var(--accent-primary); 
+    box-shadow: 0 0 20px rgba(168, 85, 247, 0.15);
+}
+.icon-audio { 
+    background: rgba(59, 130, 246, 0.15); 
+    color: #3b82f6; 
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+}
+.icon-private { 
+    background: rgba(16, 185, 129, 0.15); 
+    color: #10b981; 
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
+}
+
+.highlight-card:hover .highlight-icon {
+    transform: scale(1.1);
+}
+
+.highlight-card h3 {
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+}
+
+.highlight-card p {
+    color: var(--text-secondary);
+    font-size: 1rem;
+    line-height: 1.6;
+    margin: 0;
+}
+
+.tech-stack-line {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    opacity: 0.7;
+    margin-top: 2rem;
+}
+
+@media (max-width: 1024px) {
+    .seo-features-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .seo-features-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .section-subtitle {
+        font-size: 1.1rem;
+    }
 }
 
 /* Use Cases Section */

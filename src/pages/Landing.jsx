@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, Video, Zap, ArrowRight } from 'lucide-react';
+import { Users, Video, Zap, ArrowRight, Globe, Play, Mic, Lock } from 'lucide-react';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import Card from '../components/Card';
@@ -58,17 +58,39 @@ const Landing = () => {
                     </div>
                 </section>
 
-                {/* What is SyncRoom - SEO Text Block */}
+                {/* What is SyncRoom - Feature Highlights */}
                 <section className="seo-text-section">
-                    <h2 className="section-title">What is SyncRoom?</h2>
-                    <div className="seo-text-grid">
-                        <p>
-                            SyncRoom is a free, web-based platform designed to bring people together through synchronized media. Whether you are in a long-distance relationship, running a remote study group, or just want to hang out with friends across the country, our platform ensures you are always on the same page—literally.
-                        </p>
-                        <p>
-                            We use advanced WebRTC technology and a Selective Forwarding Unit (SFU) to ensure that when you press play, pause, or skip, the action happens instantly for everyone in your private room. Combined with built-in low-latency video and audio chat, it is the closest thing to sharing a couch in the digital world.
+                    <div className="seo-intro">
+                        <h2 className="section-title">What is SyncRoom?</h2>
+                        <p className="section-subtitle">
+                            Watch together. Talk together. Stay perfectly in sync.
                         </p>
                     </div>
+
+                    <div className="seo-features-grid">
+                        <Card className="highlight-card">
+                            <div className="highlight-icon icon-sync"><Play size={24} /></div>
+                            <h3>Real-Time Sync</h3>
+                            <p>Everyone stays perfectly in sync — play, pause, or skip instantly.</p>
+                        </Card>
+
+                        <Card className="highlight-card">
+                            <div className="highlight-icon icon-audio"><Mic size={24} /></div>
+                            <h3>Live Audio & Video</h3>
+                            <p>Talk and react together with low-latency voice and video chat.</p>
+                        </Card>
+
+                        <Card className="highlight-card">
+                            <div className="highlight-icon icon-private"><Lock size={24} /></div>
+                            <h3>Private Rooms</h3>
+                            <p>Create secure rooms for friends, study groups, or teams.</p>
+                        </Card>
+                    </div>
+
+                    <p className="tech-stack-line">
+                        <Zap size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px', color: 'var(--accent-primary)' }} /> 
+                        Powered by WebRTC for ultra-low latency and seamless synchronization.
+                    </p>
                 </section>
 
                 {/* Features Grid */}
