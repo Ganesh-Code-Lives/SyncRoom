@@ -20,13 +20,6 @@ services:
       - VITE_TURN_USER=${VITE_TURN_USER:-}
       - VITE_TURN_PASS=${VITE_TURN_PASS:-}
 
-    # ─── Port Mappings ───
-    # Map host ports → container ports
-    ports:
-      - "3001:3001"                # Socket.IO / HTTP API
-      - "40000-40999:40000-40999/udp"  # Mediasoup RTP (UDP) - Worker 1: 40000-40499, Worker 2: 40500-40999
-      - "40000-40999:40000-40999/tcp"  # Mediasoup RTCP (TCP fallback)
-
     # ─── Networking ───
     network_mode: "host"   # Bypass Docker NAT — critical for WebRTC UDP to work correctly on Linux
 
