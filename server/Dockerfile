@@ -1,38 +1,42 @@
 FROM node:18-bullseye-slim
 
-# Install system dependencies for Mediasoup (Python, Build Tools)
+# Install system dependencies for Mediasoup (Python, Build Tools, GCC)
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     build-essential \
+    gcc \
+    g++ \
+    make \
     net-tools \
     iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy package files first for caching
+# Copy package files first for layer caching
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies (includes mediasoup native build)
+RUN npm ci --omit=dev
 
 # Copy server source code
 COPY . .
 
-# Environment Defaults (Override in Deployment Provider)
+# ─── Environment Defaults (Override via docker-compose / Oracle .env) ───
 ENV NODE_ENV=production
 ENV PORT=3001
 ENV LISTEN_IP=0.0.0.0
-ENV ANNOUNCED_IP=public
+# ANNOUNCED_IP is set at runtime via docker-compose.yml / environment variable
+# so DO NOT hardcode it here
 
-# Expose API/Socket Port
+# ─── Port Exposures ───
+# API + Socket.IO port
 EXPOSE 3001
 
-# Expose Mediasoup UDP/TCP Ports (Range must match server config)
-# Standard WebRTC Range
-EXPOSE 40000-49999/udp
-EXPOSE 40000-49999/tcp
+# Mediasoup RTP/RTCP UDP+TCP port range (matches worker config)
+EXPOSE 40000-40999/udp
+EXPOSE 40000-40999/tcp
 
 # Start Server
-CMD ["npm", "start"]
+CMD ["node", "index.js"]

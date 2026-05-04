@@ -910,10 +910,20 @@ function handleUserLeave(socket) {
 }
 
 // ============================================
-// HEALTH CHECK ENDPOINT
+// HEALTH CHECK ENDPOINTS
 // ============================================
 app.get('/', (req, res) => {
     res.json({ status: 'SyncRoom Server Running', rooms: rooms.size });
+});
+
+// Docker / Oracle Cloud health check
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        rooms: rooms.size,
+        uptime: Math.floor(process.uptime()),
+        timestamp: new Date().toISOString()
+    });
 });
 
 // ============================================

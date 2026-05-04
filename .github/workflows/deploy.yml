@@ -1,0 +1,29 @@
+name: Deploy SyncRoom Server to Oracle Cloud
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'    # Only trigger when server code changes
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Oracle VM via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ORACLE_HOST }}        # Oracle VM public IP
+          username: ${{ secrets.ORACLE_USER }}    # Usually 'ubuntu' or 'opc'
+          key: ${{ secrets.ORACLE_SSH_KEY }}      # Your private SSH key
+          script: |
+            cd ~/syncroom
+            git pull origin main
+            cd server
+            docker-compose down
+            docker-compose up -d --build
+            echo "✅ Deployment complete!"
+            docker-compose ps

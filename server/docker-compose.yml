@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  syncroom-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: syncroom-server
+    restart: unless-stopped
+
+    # ─── Environment Variables ───
+    # ANNOUNCED_IP MUST be your Oracle VM's public IP
+    # Fill it in here OR create a .env file next to this docker-compose.yml
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - LISTEN_IP=0.0.0.0
+      - ANNOUNCED_IP=${ANNOUNCED_IP}          # ← Set this to your Oracle VM public IP
+      - CLIENT_URL=${CLIENT_URL:-}            # ← Optional: your Vercel URL
+      - VITE_TURN_USER=${VITE_TURN_USER:-}
+      - VITE_TURN_PASS=${VITE_TURN_PASS:-}
+
+    # ─── Port Mappings ───
+    # Map host ports → container ports
+    ports:
+      - "3001:3001"                # Socket.IO / HTTP API
+      - "40000-40999:40000-40999/udp"  # Mediasoup RTP (UDP) - Worker 1: 40000-40499, Worker 2: 40500-40999
+      - "40000-40999:40000-40999/tcp"  # Mediasoup RTCP (TCP fallback)
+
+    # ─── Networking ───
+    network_mode: "host"   # Bypass Docker NAT — critical for WebRTC UDP to work correctly on Linux
+
+    # ─── Logging ───
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # ─── Health Check ───
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
