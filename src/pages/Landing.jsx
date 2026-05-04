@@ -58,9 +58,22 @@ const Landing = () => {
                     </div>
                 </section>
 
+                {/* What is SyncRoom - SEO Text Block */}
+                <section className="seo-text-section">
+                    <h2 className="section-title">What is SyncRoom?</h2>
+                    <div className="seo-text-grid">
+                        <p>
+                            SyncRoom is a free, web-based platform designed to bring people together through synchronized media. Whether you are in a long-distance relationship, running a remote study group, or just want to hang out with friends across the country, our platform ensures you are always on the same page—literally.
+                        </p>
+                        <p>
+                            We use advanced WebRTC technology and a Selective Forwarding Unit (SFU) to ensure that when you press play, pause, or skip, the action happens instantly for everyone in your private room. Combined with built-in low-latency video and audio chat, it is the closest thing to sharing a couch in the digital world.
+                        </p>
+                    </div>
+                </section>
+
                 {/* Features Grid */}
                 <section id="features" className="features-section">
-                    <h2 className="section-title">Why SyncRoom?</h2>
+                    <h2 className="section-title" style={{ textAlign: 'center' }}>Why SyncRoom?</h2>
                     <div className="features-grid">
                         <Card hover className="feature-card">
                             <div className="feature-icon-wrapper icon-video">
@@ -94,6 +107,27 @@ const Landing = () => {
                     </div>
                 </section>
 
+                {/* Who is it for? */}
+                <section className="use-cases-section">
+                    <div className="use-cases-container">
+                        <h2 className="section-title" style={{ textAlign: 'center', marginBottom: '3rem' }}>Who Uses SyncRoom?</h2>
+                        <div className="use-cases-grid">
+                            <div className="use-case-card">
+                                <h3>Long-Distance Couples</h3>
+                                <p>Bridge the physical gap by scheduling weekly movie nights. SyncRoom's precise timing means you'll both jump at the scary parts at the exact same time.</p>
+                            </div>
+                            <div className="use-case-card">
+                                <h3>Study Groups & Students</h3>
+                                <p>Review recorded lectures or share educational YouTube videos. Use the chat to discuss complex topics without interrupting the video flow.</p>
+                            </div>
+                            <div className="use-case-card">
+                                <h3>Remote Teams</h3>
+                                <p>Need a break from formal meetings? Host a virtual team lunch and watch entertaining content together in a relaxed, synchronized environment.</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
                 {/* How it Works */}
                 <section id="how-it-works" className="how-it-works">
                     <div className="steps-container">
@@ -114,6 +148,32 @@ const Landing = () => {
                             <h3>Enjoy Together</h3>
                             <p>Play, pause, and explore web content together.</p>
                         </div>
+                    </div>
+                    <div style={{ textAlign: 'center', marginTop: '3rem' }}>
+                        <p style={{ color: '#cbd5e1', marginBottom: '1rem' }}>Need more detailed instructions?</p>
+                        <Button variant="secondary" onClick={() => navigate('/how-to-use')}>Read the Full Guide</Button>
+                    </div>
+                </section>
+
+                {/* Mini FAQ for SEO */}
+                <section className="mini-faq-section">
+                    <h2 className="section-title" style={{ textAlign: 'center', marginBottom: '3rem' }}>Frequently Asked Questions</h2>
+                    <div className="faq-list">
+                        <div className="faq-card">
+                            <h3>Is SyncRoom completely free?</h3>
+                            <p>Yes, creating rooms and inviting friends is currently 100% free with no hidden subscriptions or forced downloads.</p>
+                        </div>
+                        <div className="faq-card">
+                            <h3>Do I need to install an extension?</h3>
+                            <p>No! Unlike many competitors, SyncRoom runs entirely in your browser. There are no extensions or desktop apps to install.</p>
+                        </div>
+                        <div className="faq-card">
+                            <h3>Can I use my camera and microphone?</h3>
+                            <p>Absolutely. SyncRoom features built-in WebRTC video and audio chat so you can see and hear your friends' reactions in real-time while you watch.</p>
+                        </div>
+                    </div>
+                    <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+                        <Button variant="ghost" onClick={() => navigate('/faq')}>View All FAQs</Button>
                     </div>
                 </section>
 

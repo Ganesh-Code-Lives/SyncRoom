@@ -1,50 +1,47 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import './Footer.css';
+import { Zap } from 'lucide-react';
 
 const Footer = () => {
     return (
         <footer className="footer">
             <div className="footer-content">
-                {/* Column 1: Brand */}
+                {/* Brand Column */}
                 <div className="footer-col brand-col">
-                    <h3 className="footer-brand">SyncRoom</h3>
+                    <Link to="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                        <Zap size={20} color="#a855f7" fill="#a855f7" />
+                        <h3 className="footer-brand" style={{ margin: 0 }}>SyncRoom</h3>
+                    </Link>
                     <p className="footer-desc">
-                        Watch together, listen together. A premium synchronized media experience for friends.
+                        A premium, low-latency synchronized media experience for friends, couples, and remote teams.
                     </p>
-                    <p className="copyright">© {new Date().getFullYear()} SyncRoom.</p>
                 </div>
 
-                {/* Column 2: Product */}
+                {/* Navigation Columns */}
                 <div className="footer-col">
                     <h4>Product</h4>
-                    <a href="#" className="footer-link">Features</a>
-                    <a href="#" className="footer-link">Pricing</a>
-                    <a href="#" className="footer-link">Download</a>
-                    <a href="#" className="footer-link">Changelog</a>
+                    <Link to="/how-to-use" className="footer-link">How to Use</Link>
+                    <a href="/#features" className="footer-link">Features</a>
+                    <Link to="/faq" className="footer-link">FAQ</Link>
                 </div>
 
-                {/* Column 3: Resources */}
                 <div className="footer-col">
-                    <h4>Resources</h4>
-                    <a href="#" className="footer-link">Community</a>
-                    <a href="#" className="footer-link">Help Center</a>
-                    <a href="#" className="footer-link">Status</a>
-                    <a href="#" className="footer-link">Terms of Service</a>
-                    <a href="/privacy" className="footer-link">Privacy Policy</a>
+                    <h4>Company</h4>
+                    <Link to="/about" className="footer-link">About Us</Link>
+                    <Link to="/blog" className="footer-link">Blog</Link>
+                    <Link to="/contact" className="footer-link">Contact</Link>
                 </div>
 
-                {/* Column 4: Social */}
                 <div className="footer-col">
-                    <h4>Connect</h4>
-                    <a href="#" className="footer-link">Twitter</a>
-                    <a href="#" className="footer-link">Discord</a>
-                    <a href="#" className="footer-link">GitHub</a>
-                    <a href="#" className="footer-link">Instagram</a>
+                    <h4>Legal</h4>
+                    <Link to="/privacy" className="footer-link">Privacy Policy</Link>
+                    <Link to="/terms" className="footer-link">Terms of Service</Link>
                 </div>
             </div>
 
-
             <div className="footer-bottom">
+                <p className="copyright">© {new Date().getFullYear()} SyncRoom. All rights reserved.</p>
                 <p>Developed by <span className="developer-name">Ganesh Mamidiseththy</span></p>
             </div>
         </footer>
@@ -52,3 +49,4 @@ const Footer = () => {
 };
 
 export default Footer;
+

@@ -466,5 +466,122 @@
 
     .step-item {
         width: 100%;
+}
+
+/* SEO Text Sections */
+.seo-text-section {
+    max-width: var(--container-max);
+    margin: 4rem auto;
+    padding: 0 8vw;
+}
+
+.seo-text-section .section-title {
+    text-align: left;
+    margin-bottom: 2rem;
+    font-size: 2.5rem;
+}
+
+.seo-text-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    color: var(--text-secondary);
+    line-height: 1.8;
+    font-size: 1.125rem;
+}
+
+/* Use Cases Section */
+.use-cases-section {
+    background: linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 100%);
+    padding: 6rem 8vw;
+    margin: 4rem 0;
+}
+
+.use-cases-container {
+    max-width: var(--container-max);
+    margin: 0 auto;
+}
+
+.use-cases-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2rem;
+}
+
+.use-case-card {
+    padding: 2rem;
+    background: var(--bg-glass);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    transition: transform var(--transition-normal);
+}
+
+.use-case-card:hover {
+    transform: translateY(-5px);
+    border-color: rgba(168, 85, 247, 0.3);
+}
+
+.use-case-card h3 {
+    color: var(--accent-primary);
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+    font-weight: 600;
+}
+
+.use-case-card p {
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin: 0;
+}
+
+/* Mini FAQ Section */
+.mini-faq-section {
+    max-width: 800px;
+    margin: 6rem auto;
+    padding: 0 8vw;
+}
+
+.faq-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.faq-card {
+    background: var(--bg-glass);
+    padding: 1.5rem 2rem;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+}
+
+.faq-card h3 {
+    color: var(--text-primary);
+    font-size: 1.1rem;
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+}
+
+.faq-card p {
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.6;
+}
+
+@media (max-width: 1024px) {
+    .use-cases-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .seo-text-grid {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .use-cases-grid {
+        grid-template-columns: 1fr;
+    }
+    .seo-text-section .section-title {
+        font-size: 2rem;
     }
 }
