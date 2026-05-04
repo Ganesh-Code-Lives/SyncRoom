@@ -11,17 +11,9 @@ export default function PrivacyPolicy() {
   return (
     <div className="privacy-container">
       <div className="privacy-header">
-        <Link to="/" className="privacy-back">← Back to SyncRoom</Link>
         <div className="privacy-logo">
           <svg width="32" height="32" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="bolt2" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#a855f7"/>
-                <stop offset="100%" stopColor="#3b82f6"/>
-              </linearGradient>
-            </defs>
-            <rect width="100" height="100" rx="20" fill="#1e1b4b"/>
-            <polygon points="58,8 28,55 48,55 42,92 72,45 52,45" fill="url(#bolt2)"/>
+            <polygon points="60,6 26,54 46,54 40,94 74,46 54,46" fill="#a855f7" />
           </svg>
           <span>SyncRoom</span>
         </div>
@@ -187,7 +179,7 @@ export default function PrivacyPolicy() {
 
       <div className="privacy-footer">
         <p>© {new Date().getFullYear()} SyncRoom. All rights reserved.</p>
-        <Link to="/">Return to Home</Link>
+        <Link to="/" className="privacy-back-btn">← Return to Home</Link>
       </div>
     </div>
   );

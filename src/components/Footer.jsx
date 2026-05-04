@@ -30,6 +30,7 @@ const Footer = () => {
                     <a href="#" className="footer-link">Help Center</a>
                     <a href="#" className="footer-link">Status</a>
                     <a href="#" className="footer-link">Terms of Service</a>
+                    <a href="/privacy" className="footer-link">Privacy Policy</a>
                 </div>
 
                 {/* Column 4: Social */}

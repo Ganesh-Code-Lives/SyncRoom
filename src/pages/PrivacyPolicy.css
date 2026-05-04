@@ -14,21 +14,29 @@
   position: relative;
 }
 
-.privacy-back {
+.privacy-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1.1rem;
+  background: rgba(168, 85, 247, 0.12);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  border-radius: 8px;
+  color: #a855f7;
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
   position: absolute;
   left: 2rem;
   top: 2rem;
-  color: #a855f7;
-  text-decoration: none;
-  font-size: 0.9rem;
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  transition: color 0.2s;
 }
 
-.privacy-back:hover {
+.privacy-back-btn:hover {
+  background: rgba(168, 85, 247, 0.22);
+  border-color: rgba(168, 85, 247, 0.6);
   color: #c084fc;
+  text-decoration: none;
 }
 
 .privacy-logo {
@@ -147,7 +155,7 @@
 
 /* Mobile */
 @media (max-width: 640px) {
-  .privacy-back {
+  .privacy-back-btn {
     position: static;
     margin-bottom: 1rem;
     justify-content: center;
