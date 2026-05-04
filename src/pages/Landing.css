@@ -219,7 +219,7 @@
 
 /* Features Section */
 .features-section {
-    padding: 4rem 8vw;
+    padding: 2rem 8vw;
 }
 
 .section-header {
@@ -382,7 +382,7 @@
 
 /* How It Works Section */
 .how-it-works {
-    padding: 6rem 8vw;
+    padding: 3rem 8vw;
     background: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.2) 100%);
 }
 
@@ -472,7 +472,7 @@
 /* SEO Text Sections */
 .seo-text-section {
     max-width: var(--container-max);
-    margin: 4rem auto;
+    margin: 2rem auto;
     padding: 0 8vw;
 }
 
@@ -494,8 +494,8 @@
 /* Use Cases Section */
 .use-cases-section {
     background: linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 100%);
-    padding: 6rem 8vw;
-    margin: 4rem 0;
+    padding: 3rem 8vw;
+    margin: 2rem 0;
 }
 
 .use-cases-container {
@@ -538,7 +538,7 @@
 /* Mini FAQ Section */
 .mini-faq-section {
     max-width: 800px;
-    margin: 6rem auto;
+    margin: 3rem auto;
     padding: 0 8vw;
 }
 
