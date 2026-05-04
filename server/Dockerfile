@@ -1,4 +1,4 @@
-FROM node:18-bullseye-slim
+FROM node:22-bullseye-slim
 
 # Install system dependencies for Mediasoup (Python, Build Tools, GCC)
 RUN apt-get update && apt-get install -y \
