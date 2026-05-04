@@ -110,20 +110,20 @@ const Landing = () => {
                 {/* Who is it for? */}
                 <section className="use-cases-section">
                     <div className="use-cases-container">
-                        <h2 className="section-title" style={{ textAlign: 'center', marginBottom: '3rem' }}>Who Uses SyncRoom?</h2>
+                        <h2 className="section-title" style={{ textAlign: 'center' }}>Who Uses SyncRoom?</h2>
                         <div className="use-cases-grid">
-                            <div className="use-case-card">
+                            <Card className="use-case-card">
                                 <h3>Long-Distance Couples</h3>
                                 <p>Bridge the physical gap by scheduling weekly movie nights. SyncRoom's precise timing means you'll both jump at the scary parts at the exact same time.</p>
-                            </div>
-                            <div className="use-case-card">
+                            </Card>
+                            <Card className="use-case-card">
                                 <h3>Study Groups & Students</h3>
                                 <p>Review recorded lectures or share educational YouTube videos. Use the chat to discuss complex topics without interrupting the video flow.</p>
-                            </div>
-                            <div className="use-case-card">
+                            </Card>
+                            <Card className="use-case-card">
                                 <h3>Remote Teams</h3>
                                 <p>Need a break from formal meetings? Host a virtual team lunch and watch entertaining content together in a relaxed, synchronized environment.</p>
-                            </div>
+                            </Card>
                         </div>
                     </div>
                 </section>
@@ -157,20 +157,20 @@ const Landing = () => {
 
                 {/* Mini FAQ for SEO */}
                 <section className="mini-faq-section">
-                    <h2 className="section-title" style={{ textAlign: 'center', marginBottom: '3rem' }}>Frequently Asked Questions</h2>
+                    <h2 className="section-title" style={{ textAlign: 'center' }}>Frequently Asked Questions</h2>
                     <div className="faq-list">
-                        <div className="faq-card">
+                        <Card className="faq-card">
                             <h3>Is SyncRoom completely free?</h3>
                             <p>Yes, creating rooms and inviting friends is currently 100% free with no hidden subscriptions or forced downloads.</p>
-                        </div>
-                        <div className="faq-card">
+                        </Card>
+                        <Card className="faq-card">
                             <h3>Do I need to install an extension?</h3>
                             <p>No! Unlike many competitors, SyncRoom runs entirely in your browser. There are no extensions or desktop apps to install.</p>
-                        </div>
-                        <div className="faq-card">
+                        </Card>
+                        <Card className="faq-card">
                             <h3>Can I use my camera and microphone?</h3>
                             <p>Absolutely. SyncRoom features built-in WebRTC video and audio chat so you can see and hear your friends' reactions in real-time while you watch.</p>
-                        </div>
+                        </Card>
                     </div>
                     <div style={{ textAlign: 'center', marginTop: '2rem' }}>
                         <Button variant="ghost" onClick={() => navigate('/faq')}>View All FAQs</Button>
