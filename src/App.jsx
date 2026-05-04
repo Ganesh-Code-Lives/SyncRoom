@@ -10,6 +10,7 @@ import Room from './pages/Room';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Account from './pages/Account';
+import PrivacyPolicy from './pages/PrivacyPolicy';
 import './index.css';
 
 import { ToastProvider } from './context/ToastContext';
@@ -31,6 +32,7 @@ function App() {
                   <Route path="/create" element={<CreateRoom />} />
                   <Route path="/join" element={<JoinRoom />} />
                   <Route path="/room/:roomId" element={<Room />} />
+                  <Route path="/privacy" element={<PrivacyPolicy />} />
                 </Route>
               </Routes>
             </VoiceProvider>
