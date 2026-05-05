@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactPlayer from 'react-player';
 import { Play, Pause, Volume2, Mic, Phone, Copy, Check, Send, MessageCircle, X, Lock, Unlock, Trash2, MicOff, SkipBack, SkipForward, LogOut, Users, Crown, ArrowLeftRight, ArrowLeft, User, Settings, Smile, WifiOff, Maximize, Minimize } from 'lucide-react';
@@ -302,7 +302,7 @@ const Room = () => {
                     <p className="mobile-room-status">
                         <span className="online-dot"></span>
                         {participants.length} Online
-                        {voiceParticipants.length > 0 && ` • ${voiceParticipants.length} Speaking`}
+                        {voiceParticipants.length > 0 && ` � ${voiceParticipants.length} Speaking`}
                     </p>
                 </div>
                 <div className="mobile-header-actions">

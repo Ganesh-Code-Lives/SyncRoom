@@ -4,7 +4,7 @@ import './PrivacyPolicy.css';
 
 export default function PrivacyPolicy() {
   useEffect(() => {
-    window.scrollTo(0, 0);
+    
     document.title = 'Privacy Policy – SyncRoom';
   }, []);
 

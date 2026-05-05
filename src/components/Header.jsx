@@ -74,6 +74,7 @@ const Header = () => {
                         <Link to="/" className="nav-link">Home</Link>
                         <a href="#features" className="nav-link">Features</a>
                         <a href="#how-it-works" className="nav-link">How It Works</a>
+                        <Link to="/blog" className="nav-link">Blog</Link>
                     </nav>
                 )}
 
@@ -168,6 +169,7 @@ const Header = () => {
                         <Link to="/" className="mobile-nav-link" onClick={() => setIsMobileMenuOpen(false)}>Home</Link>
                         <a href="#features" className="mobile-nav-link" onClick={() => setIsMobileMenuOpen(false)}>Features</a>
                         <a href="#how-it-works" className="mobile-nav-link" onClick={() => setIsMobileMenuOpen(false)}>How It Works</a>
+                        <Link to="/blog" className="mobile-nav-link" onClick={() => setIsMobileMenuOpen(false)}>Blog</Link>
                         <button
                             className="mobile-nav-link text-left"
                             onClick={() => {
