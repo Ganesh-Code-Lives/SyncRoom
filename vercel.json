@@ -1,4 +1,7 @@
 {
+  "buildCommand": null,
+  "installCommand": null,
+  "outputDirectory": "dist",
   "rewrites": [
     { "source": "/ads.txt", "destination": "/ads.txt" },
     { "source": "/robots.txt", "destination": "/robots.txt" },
