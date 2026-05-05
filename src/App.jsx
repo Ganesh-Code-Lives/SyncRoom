@@ -19,6 +19,7 @@ import HowToUse from './pages/HowToUse';
 import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
 import ScrollToTop from './components/ScrollToTop';
+import CookieBanner from './components/CookieBanner';
 import './index.css';
 
 import { ToastProvider } from './context/ToastContext';
@@ -29,6 +30,7 @@ function App() {
   return (
     <Router>
       <ScrollToTop />
+      <CookieBanner />
       <ToastProvider>
         <AuthProvider>
           <RoomProvider>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import './Footer.css';
-import { Zap } from 'lucide-react';
+import { Zap, Instagram, Twitter } from 'lucide-react';
 
 const Footer = () => {
     return (
@@ -16,6 +16,14 @@ const Footer = () => {
                     <p className="footer-desc">
                         A premium, low-latency synchronized media experience for friends, couples, and remote teams.
                     </p>
+                    <div className="social-links" style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                        <a href="https://www.instagram.com/ganesh.exe/" target="_blank" rel="noopener noreferrer" className="social-link" aria-label="Instagram">
+                            <Instagram size={20} color="#cbd5e1" />
+                        </a>
+                        <a href="https://x.com/ganeshXtweets?s=20" target="_blank" rel="noopener noreferrer" className="social-link" aria-label="X (Twitter)">
+                            <Twitter size={20} color="#cbd5e1" />
+                        </a>
+                    </div>
                 </div>
 
                 {/* Navigation Columns */}
