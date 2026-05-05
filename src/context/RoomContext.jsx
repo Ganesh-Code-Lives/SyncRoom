@@ -5,6 +5,7 @@ import { useToast } from './ToastContext';
 import { socket } from '../lib/socket';
 import { sfuVoiceClient } from '../lib/sfuVoiceClient';
 import { sfuClient } from '../lib/sfuClient';
+import { logRoomActivity } from '../lib/firestoreUtils';
 
 const RoomContext = createContext();
 
@@ -160,7 +161,10 @@ export const RoomProvider = ({ children }) => {
                     } else {
                         console.error('[Socket] Failed to rejoin:', response.error);
                         // Only clear if strictly necessary
-                        if (response.error.includes('not exist') || response.error.includes('locked')) {
+                        if (response.error.toLowerCase().includes('not exist') || 
+                            response.error.toLowerCase().includes('not found') || 
+                            response.error.toLowerCase().includes('locked') ||
+                            response.redirect) {
                             sessionStorage.removeItem('syncroom_last_room');
                             setRoom(null);
                             setIsRoomLoaded(true);
@@ -168,6 +172,7 @@ export const RoomProvider = ({ children }) => {
                             showError(response.error);
                         } else {
                             // Temporary server error? Keep retrying or let user exit
+                            setIsRoomLoaded(true); // Don't hang forever
                             showError('Rejoin failed: ' + response.error);
                         }
                     }
@@ -412,6 +417,7 @@ export const RoomProvider = ({ children }) => {
                     })));
                     setChat(roomData.chat || []);
                     sessionStorage.setItem('syncroom_last_room', response.roomCode);
+                    logRoomActivity(oderId, 'CREATE_ROOM', response.roomCode, roomData.roomName).catch(console.error);
                     resolve(response.roomCode);
                 } else {
                     reject(new Error(response.error));
@@ -467,19 +473,23 @@ export const RoomProvider = ({ children }) => {
 
                     // 6. Log join success
                     console.log('[Join] Room joined successfully. Media:', roomData.media, 'IsPlaying:', roomData.isPlaying);
+                    logRoomActivity(oderId, 'JOIN_ROOM', roomData.roomId, roomData.roomName).catch(console.error);
 
                     setIsRoomLoaded(true);
                     resolve(roomData);
                 } else {
                     // STRICT REDIRECT handling
-                    if (response.redirect) {
+                    if (response.redirect || response.error.toLowerCase().includes('not found')) {
                         console.warn('[Join] Room not found. Redirecting...');
                         sessionStorage.removeItem('syncroom_last_room');
                         setRoom(null);
-                        window.location.href = '/'; // Hard redirect to clear state
-                        // navigate('/') can be insufficient if state is stuck
+                        setIsRoomLoaded(true);
+                        showError(response.error || 'Room not found');
+                        navigate('/'); 
+                        // window.location.href = '/'; // Only use if navigate fails
+                    } else {
+                        setIsRoomLoaded(true);
                     }
-                    setIsRoomLoaded(true);
                     reject(new Error(response.error));
                 }
             });

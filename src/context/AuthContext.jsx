@@ -7,6 +7,7 @@ import {
     onAuthStateChanged
 } from 'firebase/auth';
 import LoadingScreen from '../components/LoadingScreen';
+import { ensureUserDocument } from '../lib/firestoreUtils';
 
 const AuthContext = createContext();
 
@@ -18,7 +19,11 @@ export const AuthProvider = ({ children }) => {
     const [isGuest, setIsGuest] = useState(false);
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+            if (currentUser) {
+                // Ensure their document exists in Firestore (non-blocking for fast UI load)
+                ensureUserDocument(currentUser).catch(console.error);
+            }
             setUser(currentUser);
             setIsGuest(currentUser ? currentUser.isAnonymous : false);
             setLoading(false);

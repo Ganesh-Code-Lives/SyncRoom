@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertCircle } from 'lucide-react';
 import { useRoom } from '../context/RoomContext';
 import GlowButton from '../components/GlowButton';
@@ -10,21 +10,20 @@ import './CreateRoom.css';
 const JoinRoom = () => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
+    const { roomId } = useParams();
     const { joinRoom, isConnected } = useRoom();
 
     const [code, setCode] = useState('');
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [hasHydrated, setHasHydrated] = useState(false);
 
     useEffect(() => {
-        const codeFromUrl = searchParams.get('code');
-        if (codeFromUrl) {
-            setCode(codeFromUrl.toUpperCase());
-        }
-    }, [searchParams]);
+        setHasHydrated(true);
+    }, []);
 
     const handleSubmit = async (e) => {
-        e.preventDefault();
+        if (e && e.preventDefault) e.preventDefault();
         if (!code.trim()) {
             setError('Room code is required');
             return;
@@ -42,6 +41,20 @@ const JoinRoom = () => {
             setIsLoading(false);
         }
     };
+
+    useEffect(() => {
+        if (!hasHydrated) return;
+
+        const codeFromUrl = searchParams.get('code') || roomId;
+        if (codeFromUrl) {
+            setCode(codeFromUrl.toUpperCase());
+            
+            // AUTO-JOIN logic: if it's from a direct link (:roomId), try to join immediately
+            if (roomId && isConnected && !isLoading && codeFromUrl) {
+                handleSubmit();
+            }
+        }
+    }, [searchParams, roomId, isConnected, hasHydrated]); // Trigger when connected and hydrated
 
     return (
         <div className="page-wrapper-centered">

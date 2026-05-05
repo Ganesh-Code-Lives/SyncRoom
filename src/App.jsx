@@ -42,7 +42,9 @@ function App() {
                   <Route path="/login" element={<Login />} />
                   <Route path="/create" element={<CreateRoom />} />
                   <Route path="/join" element={<JoinRoom />} />
+                  <Route path="/join/:roomId" element={<JoinRoom />} />
                   <Route path="/room/:roomId" element={<Room />} />
+                  <Route path="/account" element={<Account />} />
                   <Route path="/privacy-policy" element={<PrivacyPolicy />} />
                   <Route path="/about" element={<About />} />
                   <Route path="/contact" element={<Contact />} />
