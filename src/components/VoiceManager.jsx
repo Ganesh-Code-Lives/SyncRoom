@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { socket } from '../lib/socket';
 import { sfuVoiceClient } from '../lib/sfuVoiceClient';
+import { sfuClient } from '../lib/sfuClient';
 import { useRoom } from '../context/RoomContext';
 import { useVoice } from '../context/VoiceContext';
 import { useToast } from '../context/ToastContext';
-import { RNNoiseNode } from '../lib/audio/RNNoiseNode';
 
 const VoiceManager = () => {
     const { room, currentUser } = useRoom();
@@ -15,7 +15,6 @@ const VoiceManager = () => {
         setVoiceTrigger,
         isDeafened,
         isMuted,
-        isNoiseOn,
         isEchoOn,
         userVolumes,
         setLocalVolume
@@ -33,13 +32,18 @@ const VoiceManager = () => {
     const localStreamRef = useRef(null);
     const connectingRef = useRef(false); // Prevent double-clicks
     const processingRef = useRef(false); // Global processing lock for toggles
-    const rnnoiseNodeRef = useRef(null);
-    const processorDestinationRef = useRef(null);
     const rawStreamRef = useRef(null);
+    const statsIntervalRef = useRef(null);
+    const videoClampStateRef = useRef({
+        applied: false,
+        original: new Map() // senderTrackId -> [{ maxBitrate, priority, networkPriority, scaleResolutionDownBy }]
+    });
 
     const VAD_THRESHOLD = 25;
     const VAD_HANGOVER_TIME = 1500; // 1.5s of silence before cutting off
     const vadHangoverRef = useRef(0);
+    const vadSmoothedRef = useRef(0);
+    const vadNoiseFloorRef = useRef(0.01);
 
     // Audio Cleanup Handler
     const removeAudio = useCallback((producerId) => {
@@ -132,13 +136,13 @@ const VoiceManager = () => {
 
             const source = ctx.createMediaStreamSource(stream);
             const analyser = ctx.createAnalyser();
-            analyser.fftSize = 64;
-            analyser.smoothingTimeConstant = 0.5; // Smoother visuals
+            analyser.fftSize = 1024;
+            analyser.smoothingTimeConstant = 0.2;
             source.connect(analyser);
             analyserRef.current = analyser;
 
-            const bufferLength = analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
+            const bufferLength = analyser.fftSize;
+            const dataArray = new Float32Array(bufferLength);
 
             // Start Animation Loop
             if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
@@ -147,17 +151,30 @@ const VoiceManager = () => {
             const checkActivity = () => {
                 if (!analyserRef.current || !isJoined) return;
 
-                analyserRef.current.getByteFrequencyData(dataArray);
-                let sum = 0;
-                for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-                const average = sum / bufferLength;
+                analyserRef.current.getFloatTimeDomainData(dataArray);
+                let sumSq = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                    const v = dataArray[i];
+                    sumSq += v * v;
+                }
+                const rms = Math.sqrt(sumSq / bufferLength);
+
+                // Adaptive noise floor (slow)
+                const nf = vadNoiseFloorRef.current || 0.01;
+                vadNoiseFloorRef.current = Math.max(0.001, Math.min(nf * 0.995 + rms * 0.005, 0.05));
+
+                // Smooth VAD level (fast)
+                const prev = vadSmoothedRef.current || 0;
+                const smooth = prev * 0.85 + rms * 0.15;
+                vadSmoothedRef.current = smooth;
 
                 // Thresholds
                 const isMicHardwareOn = !isMuted;
-                const aboveThreshold = average > VAD_THRESHOLD;
+                const trigger = Math.max(vadNoiseFloorRef.current * 4.0, 0.02);
+                const aboveThreshold = smooth > trigger;
 
                 // UI Volume
-                setLocalVolume(isMicHardwareOn ? Math.min(100, Math.round(average * 2.5)) : 0);
+                setLocalVolume(isMicHardwareOn ? Math.min(100, Math.round(smooth * 220)) : 0);
 
                 // Hangover Logic
                 if (aboveThreshold) {
@@ -223,20 +240,21 @@ const VoiceManager = () => {
 
                 info("Connecting voice...");
 
-                // 1. Acquire Mic (Clean)
+                // 1. Acquire Mic (Production defaults: browser AEC/NS/AGC)
                 let stream;
                 try {
                     stream = await navigator.mediaDevices.getUserMedia({
                         audio: {
-                            echoCancellation: isEchoOn,  // Use user's echo setting
-                            noiseSuppression: false,     // We want raw for RNNoise
-                            autoGainControl: false,
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
                             channelCount: 1,
-                            sampleRate: 48000
+                            sampleRate: 48000,
+                            sampleSize: 16
                         },
                         video: false
                     });
-                    console.log(`[VoiceManager] 🎤 Initial mic with echoCancellation=${isEchoOn}`);
+                    console.log(`[VoiceManager] 🎤 Mic acquired (AEC/NS/AGC enabled)`);
                 } catch (e) {
                     console.warn("Strict mic failed, using fallback");
                     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -252,36 +270,9 @@ const VoiceManager = () => {
                 localStreamRef.current = stream; // Store "current active stream"
                 rawStreamRef.current = stream;   // Store "raw source"
 
-                // 3. Prepare Pipeline
-                let finalTrack = micTrack;
-
-                if (isNoiseOn) {
-                    try {
-                        const ctx = await getOrInitContext();
-
-                        // Create RNNoise if missing
-                        if (!rnnoiseNodeRef.current) {
-                            const rnnoise = new RNNoiseNode(ctx);
-                            await rnnoise.init();
-                            rnnoiseNodeRef.current = rnnoise;
-                            processorDestinationRef.current = ctx.createMediaStreamDestination();
-                        }
-
-                        // Connect Graph: Source -> RNNoise -> Destination
-                        const source = ctx.createMediaStreamSource(stream);
-                        source.connect(rnnoiseNodeRef.current.processor);
-                        rnnoiseNodeRef.current.processor.connect(processorDestinationRef.current);
-
-                        const procTrack = processorDestinationRef.current.stream.getAudioTracks()[0];
-                        if (procTrack && procTrack.readyState === 'live') {
-                            finalTrack = procTrack;
-                            console.log("[VoiceManager] 🔉 RNNoise Pipeline Active");
-                        }
-                    } catch (e) {
-                        console.error("RNNoise Init Failed:", e);
-                        // Fallback automatically to raw 'finalTrack'
-                    }
-                }
+                // 3. Pipeline: use the raw mic track directly.
+                // Custom DSP (RNNoise ScriptProcessor) removed because it adds latency and glitches under UI load.
+                const finalTrack = micTrack;
 
                 if (cancelled) return;
 
@@ -315,7 +306,7 @@ const VoiceManager = () => {
 
         connectVoice();
 
-    }, [voiceTrigger, isJoined, room, currentUser, socket, getOrInitContext, setupVAD, isNoiseOn, isMuted, info, showError, showSuccess]);
+    }, [voiceTrigger, isJoined, room, currentUser, socket, getOrInitContext, setupVAD, isMuted, info, showError, showSuccess]);
 
     // Mic State Sync
     useEffect(() => {
@@ -353,122 +344,8 @@ const VoiceManager = () => {
         }
     }, [room, currentUser, voiceParticipants, isJoined, setupVAD, fetchProducers]);
 
-    // RNNoise / Feature Toggle Logic
-    const prevNoiseOnRef = useRef(isNoiseOn);
-    const prevEchoOnRef = useRef(isEchoOn);
-
-    useEffect(() => {
-        // Only run logic if isNoiseOn OR isEchoOn actually CHANGED while we are joined.
-        const noiseChanged = prevNoiseOnRef.current !== isNoiseOn;
-        const echoChanged = prevEchoOnRef.current !== isEchoOn;
-
-        prevNoiseOnRef.current = isNoiseOn;
-        prevEchoOnRef.current = isEchoOn;
-
-        if (!isJoined || (!noiseChanged && !echoChanged)) return;
-        if (processingRef.current) return; // Lock
-
-        const togglePipeline = async () => {
-            processingRef.current = true;
-            console.log(`[VoiceManager] 🔄 Refreshing Pipeline (Noise: ${isNoiseOn}, Echo: ${isEchoOn})`);
-
-            let newStream = null;
-            let oldStream = localStreamRef.current;
-
-            try {
-                // 1. Acquire NEW Source with proper echo cancellation setting
-                try {
-                    newStream = await navigator.mediaDevices.getUserMedia({
-                        audio: {
-                            echoCancellation: isEchoOn,  // Apply echo setting
-                            noiseSuppression: false,     // We control this with RNNoise
-                            autoGainControl: false,
-                            channelCount: 1,
-                            sampleRate: 48000
-                        }
-                    });
-                    console.log(`[VoiceManager] 🎤 Acquired mic with echoCancellation=${isEchoOn}`);
-                } catch (e) {
-                    console.warn("Strict toggle capture failed", e);
-                    newStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                }
-
-                const newTrack = newStream.getAudioTracks()[0];
-                newTrack.enabled = !isMuted; // Sync mute state
-
-                let targetTrack = newTrack;
-
-                // 2. Process if needed
-                console.log(`[VoiceManager] 🔍 isNoiseOn = ${isNoiseOn}`);
-                if (isNoiseOn) {
-                    console.log("[VoiceManager] 🎯 Entering RNNoise Processing Block");
-                    try {
-                        const ctx = await getOrInitContext();
-                        console.log("[VoiceManager] ✓ AudioContext ready:", ctx.state);
-
-                        if (!rnnoiseNodeRef.current) {
-                            console.log("[VoiceManager] 🔧 Initializing NEW RNNoise instance...");
-                            const rnnoise = new RNNoiseNode(ctx);
-                            await rnnoise.init();
-                            rnnoiseNodeRef.current = rnnoise;
-                            console.log("[VoiceManager] ✅ RNNoise initialized successfully");
-                        } else {
-                            console.log("[VoiceManager] ♻️ Reusing existing RNNoise instance");
-                        }
-
-                        // CRITICAL FIX: Create a FRESH destination every time to prevent "ended" track bug
-                        console.log("[VoiceManager] 🆕 Creating fresh MediaStreamDestination...");
-                        processorDestinationRef.current = ctx.createMediaStreamDestination();
-
-                        // Connect New Source -> RNNoise -> Fresh Destination
-                        console.log("[VoiceManager] 🔗 Connecting audio graph...");
-                        const source = ctx.createMediaStreamSource(newStream);
-                        source.connect(rnnoiseNodeRef.current.processor);
-                        rnnoiseNodeRef.current.processor.connect(processorDestinationRef.current);
-
-                        const procTrack = processorDestinationRef.current.stream.getAudioTracks()[0];
-                        console.log(`[VoiceManager] 📡 Processed track state: ${procTrack?.readyState}`);
-                        if (procTrack && procTrack.readyState === 'live') {
-                            targetTrack = procTrack;
-                            console.log("[VoiceManager] ✅ Using RNNoise processed track:", procTrack.id);
-                        } else {
-                            console.warn("[VoiceManager] ⚠️ Processed track invalid, using raw");
-                        }
-                    } catch (e) {
-                        console.error("[VoiceManager] ❌ RNNoise Failed:", e);
-                        showError("Noise Suppression Failed - Using Standard");
-                    }
-                } else {
-                    console.log("[VoiceManager] 🎤 Using RAW microphone (No Processing)");
-                }
-
-                // 3. Replace Track in SFU
-                await sfuVoiceClient.replaceAudioTrack(targetTrack);
-
-                // 4. Update Refs & VAD
-                localStreamRef.current = newStream;
-                setupVAD(newStream); // Visualize new valid source
-
-                // 5. Stop Old Stream (Delay slightly to ensure handover?)
-                // Actually standard practice is stop immediately after replace confirms.
-                if (oldStream && oldStream.id !== newStream.id) {
-                    oldStream.getTracks().forEach(t => t.stop());
-                }
-
-                showSuccess(isNoiseOn ? "Noise Suppression Enabled" : "Noise Suppression Disabled");
-
-            } catch (err) {
-                console.error("Toggle Failed:", err);
-                showError("Toggle Failed");
-                // Cleanup new if failed
-                if (newStream) newStream.getTracks().forEach(t => t.stop());
-            } finally {
-                processingRef.current = false;
-            }
-        };
-
-        togglePipeline();
-    }, [isNoiseOn, isEchoOn, isJoined, getOrInitContext, setupVAD, isMuted, showError, showSuccess]);
+    // NOTE: Echo/noise toggles no longer hot-swap the mic track.
+    // This intentionally stabilizes voice latency and prevents glitchy mid-call DSP graph rebuilds.
 
     // Individual Volume Control
     useEffect(() => {
@@ -483,12 +360,167 @@ const VoiceManager = () => {
         });
     }, [userVolumes]);
 
+    // Voice telemetry + first-pass congestion protection (audio-first).
+    useEffect(() => {
+        if (!isJoined) return;
+
+        const pc = sfuVoiceClient.sendTransport?._handler?._pc;
+        if (!pc?.getStats) return;
+
+        let lastSummaryAt = 0;
+        let lastPacketsSent = 0;
+        let lastPacketsLost = 0;
+
+        const tick = async () => {
+            try {
+                const stats = await pc.getStats();
+                let outboundAudio = null;
+                let candidatePair = null;
+                let transport = null;
+
+                stats.forEach(report => {
+                    if (report.type === 'outbound-rtp' && report.kind === 'audio') outboundAudio = report;
+                    if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) candidatePair = report;
+                    if (report.type === 'transport') transport = report;
+                });
+
+                // Derive a rough loss fraction using deltas (when available)
+                let lossFrac = 0;
+                if (outboundAudio?.packetsSent != null) {
+                    const ps = outboundAudio.packetsSent;
+                    const pl = outboundAudio.packetsLost || 0;
+                    const dSent = ps - lastPacketsSent;
+                    const dLost = pl - lastPacketsLost;
+                    if (dSent > 0) lossFrac = Math.max(0, Math.min(1, dLost / dSent));
+                    lastPacketsSent = ps;
+                    lastPacketsLost = pl;
+                }
+
+                const rtt = candidatePair?.currentRoundTripTime != null ? candidatePair.currentRoundTripTime : null;
+                const relay = candidatePair?.localCandidateType === 'relay' || candidatePair?.remoteCandidateType === 'relay';
+
+                // Audio-first protection: if RTT/loss is bad, clamp audio bitrate down to stabilize.
+                // (This is intentionally conservative; later we can do tiered control + video sacrifice.)
+                const degraded = (rtt != null && rtt > 0.3) || lossFrac > 0.08 || relay;
+                const targetMaxBitrate = degraded ? 32000 : 64000;
+
+                try {
+                    const sender = pc.getSenders?.().find(s => s.track && s.track.kind === 'audio');
+                    if (sender?.getParameters && sender?.setParameters) {
+                        const params = sender.getParameters();
+                        if (params?.encodings?.length) {
+                            const cur = params.encodings[0].maxBitrate;
+                            if (cur == null || Math.abs(cur - targetMaxBitrate) > 1000) {
+                                params.encodings[0] = { ...params.encodings[0], maxBitrate: targetMaxBitrate };
+                                await sender.setParameters(params);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // Ignore setParameters failures.
+                }
+
+                // Video sacrifice policy (screenshare/camera): when voice is degraded, clamp any active
+                // video encoders on the media SFU transport aggressively. Restore when voice recovers.
+                try {
+                    const vpc = sfuClient.sendTransport?._handler?._pc;
+                    if (vpc?.getSenders) {
+                        const senders = vpc.getSenders().filter(s => s.track && s.track.kind === 'video');
+                        if (degraded) {
+                            if (!videoClampStateRef.current.applied) {
+                                // Snapshot originals once (per sender track)
+                                for (const s of senders) {
+                                    const params = s.getParameters?.();
+                                    if (params?.encodings?.length) {
+                                        videoClampStateRef.current.original.set(
+                                            s.track.id,
+                                            params.encodings.map(e => ({
+                                                maxBitrate: e.maxBitrate,
+                                                priority: e.priority,
+                                                networkPriority: e.networkPriority,
+                                                scaleResolutionDownBy: e.scaleResolutionDownBy
+                                            }))
+                                        );
+                                    }
+                                }
+                                videoClampStateRef.current.applied = true;
+                                console.log('[VoicePolicy] Degraded voice detected -> clamping video encoders');
+                            }
+
+                            // Clamp: keep a tiny base layer to reduce encoder spikes.
+                            for (const s of senders) {
+                                if (!s.getParameters || !s.setParameters) continue;
+                                const params = s.getParameters();
+                                if (!params?.encodings?.length) continue;
+
+                                params.encodings = params.encodings.map((e, idx) => {
+                                    const target = idx === 0 ? 80000 : (idx === 1 ? 150000 : 250000);
+                                    return {
+                                        ...e,
+                                        priority: 'low',
+                                        networkPriority: 'low',
+                                        maxBitrate: Math.min(e.maxBitrate || target, target)
+                                    };
+                                });
+                                await s.setParameters(params);
+                            }
+                        } else if (videoClampStateRef.current.applied) {
+                            // Restore originals
+                            for (const s of senders) {
+                                if (!s.getParameters || !s.setParameters) continue;
+                                const orig = videoClampStateRef.current.original.get(s.track.id);
+                                if (!orig) continue;
+                                const params = s.getParameters();
+                                if (!params?.encodings?.length) continue;
+                                params.encodings = params.encodings.map((e, idx) => ({
+                                    ...e,
+                                    ...orig[idx]
+                                }));
+                                await s.setParameters(params);
+                            }
+                            videoClampStateRef.current.applied = false;
+                            videoClampStateRef.current.original.clear();
+                            console.log('[VoicePolicy] Voice recovered -> restored video encoder parameters');
+                        }
+                    }
+                } catch (e) {
+                    // Ignore policy failures (no active video transport, browser restrictions, etc.)
+                }
+
+                const now = Date.now();
+                if (now - lastSummaryAt > 5000) {
+                    lastSummaryAt = now;
+                    console.log('[VoiceTelemetry]', {
+                        rttMs: rtt != null ? Math.round(rtt * 1000) : null,
+                        relay,
+                        lossFrac: Number(lossFrac.toFixed(3)),
+                        audioMaxBitrate: targetMaxBitrate,
+                        bytesSent: outboundAudio?.bytesSent,
+                        packetsSent: outboundAudio?.packetsSent,
+                        packetsLost: outboundAudio?.packetsLost,
+                        availableOutgoingBitrate: candidatePair?.availableOutgoingBitrate
+                    });
+                }
+            } catch (e) {
+                // Swallow stats errors.
+            }
+        };
+
+        statsIntervalRef.current = setInterval(tick, 1000);
+        tick();
+
+        return () => {
+            if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
+            statsIntervalRef.current = null;
+        };
+    }, [isJoined]);
+
     // Cleanup on Leave
     const leaveVoiceChannel = useCallback(async () => {
         if (!isJoined) return;
 
         // Stop SFU
-        await sfuVoiceClient.leaveVoice();
+        sfuVoiceClient.terminate();
 
         // Stop Tracks
         if (localStreamRef.current) {
@@ -500,14 +532,6 @@ const VoiceManager = () => {
         if (analyserRef.current) {
             analyserRef.current.disconnect();
             analyserRef.current = null;
-        }
-
-        // Destroy RNNoise? Or keep for session? 
-        // Better to keep context alive but suspend if huge resource?
-        // Let's destroy node but keep context.
-        if (rnnoiseNodeRef.current) {
-            rnnoiseNodeRef.current.destroy();
-            rnnoiseNodeRef.current = null;
         }
 
         if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);

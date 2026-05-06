@@ -63,7 +63,7 @@ const Header = () => {
                 {/* Left: Logo */}
                 <Link to="/" className="logo-link">
                     <div className="logo-icon-wrapper">
-                        <Zap size={20} fill="currentColor" className="logo-icon" />
+                        <img src="/syncroom.svg" alt="SyncRoom" className="logo-icon" width="20" height="20" />
                     </div>
                     <span className="logo-text">SyncRoom</span>
                 </Link>

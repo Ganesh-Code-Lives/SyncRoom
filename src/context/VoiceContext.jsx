@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { socket } from '../lib/socket';
 import { useToast } from './ToastContext';
 import { useRoom } from './RoomContext';
@@ -11,13 +11,68 @@ export const VoiceProvider = ({ children }) => {
     const [isMuted, setIsMuted] = useState(false);
     const [isDeafened, setIsDeafened] = useState(false);
     const [isNoiseOn, setIsNoiseOn] = useState(false);
-    const [isEchoOn, setIsEchoOn] = useState(false);
+    const [isEchoOn, setIsEchoOn] = useState(true);
     const [userVolumes, setUserVolumes] = useState({}); // userId -> volume (0-1)
     const [localVolume, setLocalVolume] = useState(0); // 0-100 for mic meter
     const [voiceTrigger, setVoiceTrigger] = useState(null); // 'join' | 'leave' | null
     const [isVoiceOpenMobile, setIsVoiceOpenMobile] = useState(false);
 
     const { info, success } = useToast();
+
+    const voiceParticipantsRef = useRef(voiceParticipants);
+    useEffect(() => {
+        voiceParticipantsRef.current = voiceParticipants;
+    }, [voiceParticipants]);
+
+    // Push to Talk (Spacebar)
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.code === 'Space' && !e.repeat) {
+                const tag = e.target.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+                
+                const isJoined = voiceParticipantsRef.current.some(p => p.oderId === currentUser?.oderId);
+                if (!isJoined || !room || !currentUser) return;
+
+                e.preventDefault();
+                setIsMuted(prev => {
+                    if (prev === true) {
+                        socket.emit('voice_mute_update', { roomCode: room.code, userId: currentUser.oderId, isMuted: false });
+                        setVoiceParticipants(current => current.map(u => u.oderId === currentUser.oderId ? { ...u, isMuted: false } : u));
+                        return false;
+                    }
+                    return prev;
+                });
+            }
+        };
+
+        const handleKeyUp = (e) => {
+            if (e.code === 'Space') {
+                const tag = e.target.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+                
+                const isJoined = voiceParticipantsRef.current.some(p => p.oderId === currentUser?.oderId);
+                if (!isJoined || !room || !currentUser) return;
+
+                setIsMuted(prev => {
+                    if (prev === false) {
+                        socket.emit('voice_mute_update', { roomCode: room.code, userId: currentUser.oderId, isMuted: true });
+                        setVoiceParticipants(current => current.map(u => u.oderId === currentUser.oderId ? { ...u, isMuted: true } : u));
+                        return true;
+                    }
+                    return prev;
+                });
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+        };
+    }, [room, currentUser]);
 
     // Sync voice participants from room snapshot if available (initial load)
     useEffect(() => {

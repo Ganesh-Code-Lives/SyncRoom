@@ -1,0 +1,21 @@
+{
+  "name": "SyncRoom",
+  "short_name": "SyncRoom",
+  "description": "Watch videos, listen to music, and hang out together in real-time.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0f1e",
+  "theme_color": "#7c3aed",
+  "icons": [
+    {
+      "src": "/favicon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

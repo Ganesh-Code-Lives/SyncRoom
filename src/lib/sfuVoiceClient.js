@@ -216,6 +216,28 @@ class SfuVoiceClient {
 
             this.producers.set('voice', producer);
 
+            // Best-effort: harden audio-first RTP sender priority (Chrome/Edge).
+            // mediasoup-client doesn't expose RTCRtpSender directly, but we can reach it via the handler PC.
+            try {
+                const pc = this.sendTransport?._handler?._pc;
+                const sender = pc?.getSenders?.().find(s => s.track && s.track.id === track.id);
+                if (sender?.getParameters && sender?.setParameters) {
+                    const params = sender.getParameters();
+                    if (params?.encodings?.length) {
+                        params.encodings[0] = {
+                            ...params.encodings[0],
+                            priority: 'high',
+                            networkPriority: 'high',
+                            maxBitrate: Math.min(params.encodings[0].maxBitrate || 64000, 64000)
+                        };
+                        await sender.setParameters(params);
+                        console.log('[VoiceSFU] Applied RTCRtpSender audio priority/networkPriority');
+                    }
+                }
+            } catch (e) {
+                // Ignore: browser/handler may not expose these fields.
+            }
+
             producer.on('transportclose', () => {
                 console.log('[VoiceSFU] Voice producer transport closed');
                 this.producers.delete('voice');
